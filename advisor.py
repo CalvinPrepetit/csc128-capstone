@@ -85,9 +85,9 @@ def intake_question(session, proposed):
         if not re.search(r"\b(?:lights?|dashboard|dash)\b", details):
             return "Do the dashboard lights turn on when you turn the key?"
     elif re.search(r"\b(?:rattle|rattles|rattling|rattlin|noise|squeak|squeaking|grinding)\b", details):
-        if not re.search(r"\b(?:idle|idling|braking|accelerating|turning|driving|speed|stopped|moving)\b", details):
+        if not re.search(r"\b(?:idle|idling|braking|accelerating|turning|driving|speed|stopped|moving|parked|sitting|starting|stop light)\b", details):
             return "When do you hear the noise?"
-        if not re.search(r"\b(?:front|back|rear|underneath|under|inside|outside|wheel|engine)\b", details):
+        if not re.search(r"\b(?:front|back|rear|underneath|under|inside|outside|wheel|engine|vents?)\b", details):
             return "Where does the noise seem to come from?"
     elif session["questions_asked"] == 1 and not proposed:
         return "What do you notice when the problem happens?"
@@ -115,6 +115,8 @@ def preview_text(pending):
     return "\n\n".join(lines)
 
 def prepare_preview(session, kind):
+    if not session["fields"]["expected_work"]:
+        session["fields"]["expected_work"] = "Diagnostic inspection of reported concern"
     if kind != "summary":
         validate_fields(session["fields"], session["departments_confirmed"], kind, session["records"])
     session["pending"] = {"kind": kind, "fields": deepcopy(session["fields"]), "original_messages": list(session["original_messages"]),
@@ -182,6 +184,10 @@ def apply_updates(result, text, session):
             if value.casefold() not in evidence.casefold() or not value.strip():
                 raise ValueError("Unsupported extracted text")
             parsed[key] = value.strip()
+            if key == "expected_work":
+                work = normalize(value)
+                if "tire" in work and re.search(r"\b(?:change|changed|replace|replaced|replacement)\b", work):
+                    parsed[key] = "Customer-requested tire replacement"
         elif key == "day":
             if re.search(r"\b(?:today|tomorrow|yesterday|(?:next|this|coming)\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b", text, re.I):
                 raise ValueError("Please use a weekday without a relative calendar date.")
@@ -206,7 +212,7 @@ def apply_updates(result, text, session):
     if "day" in parsed and parsed["day"] != session["fields"]["day"] and "time" not in parsed:
         parsed["time"] = ""
     session["fields"].update(parsed)
-    if result["summary"] and (parsed or result["has_issue"]):
+    if result["summary"] and result["has_issue"]:
         session["fields"]["summary"] = result["summary"]
     if result["has_issue"] or first_concern:
         if result["summary"]:
@@ -217,12 +223,27 @@ def apply_updates(result, text, session):
         if departments:
             session["fields"]["departments"] = departments
             session["reasons"] = result["reasons"]
+        if re.search(r"\b(?:not|isn t|isnt)\s+(?:the )?(?:ac|a c|air conditioning)\b", normalize(text)):
+            session["reported_vent_source"] = False
+        if re.search(r"\b(?:ac|a c|air conditioning)\s+vents?\b", normalize(text)) and not re.search(r"\b(?:not|isn t|isnt)\s+(?:the )?(?:ac|a c|air conditioning)\b", normalize(text)):
+            session["reported_vent_source"] = True
+            session["reported_no_smoke"] = bool(re.search(r"\b(?:no smoke|don t see smoke|dont see smoke)\b", normalize(text)))
+            if "interior" not in session["fields"]["departments"]:
+                session["fields"]["departments"].append("interior")
+            session["reasons"]["interior"] = "Possible cabin vent source reported by the customer; inspection is needed."
         if first_concern or session["fields"]["departments"] != old_departments:
             session["departments_confirmed"] = False
     elif result["action"] == "revise" and result["departments"] and result["departments"] != session["fields"]["departments"]:
         session["fields"]["departments"] = result["departments"]
         session["reasons"] = result["reasons"]
         session["departments_confirmed"] = False
+    onset = session.get("issue_onset", "")
+    if onset and normalize(onset) not in normalize(session["fields"]["summary"]):
+        session["fields"]["summary"] += " First noticed: " + onset + "."
+    if session.get("reported_vent_source") and "vent" not in session["fields"]["summary"].lower():
+        session["fields"]["summary"] += " Customer reports a possible AC-vent source; location is uncertain."
+    if session.get("reported_no_smoke") and "smoke" not in session["fields"]["summary"].lower():
+        session["fields"]["summary"] += " Customer reports no visible smoke."
 
 def confirm(session):
     if session["stage"] == "departments":
@@ -298,10 +319,19 @@ def handle(text, session, client_factory, control=None):
     if session["pending"] and consent_conflict(text) and "?" not in text:
         invalidate(session)
     result = interpret(text, session, client_factory())
+    routing_ok = (session["stage"] == "departments" and result["routing_agreement"]
+                  and not consent_conflict(text.replace("?", ""))
+                  and (not result["has_issue"] or not result["departments"]
+                       or set(result["departments"]) == set(session["fields"]["departments"])))
+    if routing_ok:
+        # Agreement to routing plus a visit question is not consent to save a record.
+        result["has_issue"] = False
+        result["summary"] = ""
     # Symptom history is not a requested appointment, even if it contains a weekday/time.
     explicit_visit = bool(re.search(r"\b(?:book|schedule|appointment|visit|bring|drop off|come in)\b", clean))
     past_event = bool(re.search(r"\b(?:tried|started|noticed|heard|happened|this morning|yesterday)\b", clean))
-    symptom_answer = answering_issue and not explicit_visit
+    identity_only = (not result["has_issue"] and any(result["updates"].get(key) for key in ("customer_name", "vehicle")))
+    symptom_answer = answering_issue and not explicit_visit and not identity_only
     if symptom_answer or (past_event and result["has_issue"] and not explicit_visit):
         result["updates"].pop("day", None)
         result["updates"].pop("time", None)
@@ -330,8 +360,7 @@ def handle(text, session, client_factory, control=None):
             return confirm(session)
         return prefix or "Your saved request is unchanged. Start Over for a new request. " + REFUSALS["saved_change"]
     requested_intent = result["intent"] not in {"continue", "information"} and result["intent"] != session["intent"]
-    new_issue = result["has_issue"] and (result["summary"] != session["fields"]["summary"] or result["departments"] != session["fields"]["departments"])
-    changing = bool(result["updates"] or new_issue or result["action"] == "revise" or requested_intent)
+    changing = bool(result["updates"] or result["has_issue"] or result["action"] == "revise" or requested_intent or routing_ok)
     if result["action"] == "confirm" and not changing and not consent_conflict(text):
         return (prefix + "\n\n" if prefix else "") + confirm(session)
     if result["action"] == "decline":
@@ -340,6 +369,10 @@ def handle(text, session, client_factory, control=None):
         return prefix or ("No request was saved. Ask about the displayed details, tell me what to change, or reply yes to confirm." if session["pending"] else advance(session))
     candidate = deepcopy(session)
     invalidate(candidate)
+    if result["action"] == "revise" and re.search(r"\b(?:onset|noticed|started)\b", clean):
+        candidate["issue_onset"] = ""
+    if symptom_answer and re.search(r"first notice|(?:did|does).*start|begin", session.get("last_question", ""), re.I):
+        candidate["issue_onset"] = text.strip()
     try:
         apply_updates(result, text, candidate)
     except ValueError as error:
@@ -348,6 +381,8 @@ def handle(text, session, client_factory, control=None):
         return "I could not validate those details. Please give the correction again, using a weekday and a time such as 9am when scheduling. No request was saved."
     if result["intent"] not in {"continue", "information"}:
         candidate["intent"] = result["intent"]
+    if routing_ok:
+        candidate["departments_confirmed"] = True
     if candidate["intent"] == "ticket" and re.search(r"\b(?:unscheduled|without an? appointment|no appointment)\b", clean):
         candidate["fields"]["day"] = candidate["fields"]["time"] = ""
     session.update(candidate)

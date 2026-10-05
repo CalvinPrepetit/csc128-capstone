@@ -16,7 +16,7 @@ from tools import normalize_day, normalize_time, find_openings, save_record, OPE
 
 def output(**changes):
     data = dict(intent="continue", action="provide", updates={}, departments=[], reasons={},
-                has_issue=False, summary="", clarification="", policy_topic="", refusal="")
+                has_issue=False, routing_agreement=False, summary="", clarification="", policy_topic="", refusal="")
     data.update(changes)
     return data
 
@@ -42,6 +42,81 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_first_issue_without_model_note_or_routing_still_collects_details(self):
+        s = new_session()
+        reply = send(s, "My car is making this weird hissing noise", action="question",
+                     has_issue=True, clarification="When did it start?")
+        self.assertEqual(s["stage"], "clarify")
+        self.assertIn("hissing", s["fields"]["summary"])
+        self.assertNotIn("Tell me what is happening", reply)
+
+    def test_hissing_conditions_advance_to_location_and_preserve_onset(self):
+        s = new_session()
+        send(s, "Hissing noise", has_issue=True, summary="Hissing noise.", departments=["drivability"])
+        send(s, "Last month", summary="Hissing noise since last month.")
+        reply = send(s, "At a stop light or parked after sitting", summary="Hissing while parked.")
+        self.assertEqual(s["stage"], "clarify")
+        self.assertIn("Where", reply)
+        self.assertIn("Last month", s["fields"]["summary"])
+
+    def test_routing_agreement_and_scheduling_question_are_separate(self):
+        s = filled("ticket")
+        s["pending"] = None
+        s["departments_confirmed"] = False
+        s["stage"] = "departments"
+        s["fields"]["customer_name"] = ""
+        reply = send(s, "Yea thats fine whens the soonest i cna come in?", intent="appointment",
+                     action="question", routing_agreement=True, departments=["maintenance"])
+        self.assertTrue(s["departments_confirmed"])
+        self.assertEqual(s["intent"], "appointment")
+        self.assertEqual(s["stage"], "collect")
+        self.assertIn("name", reply)
+        self.assertEqual(s["records"], [])
+
+    def test_conditional_routing_agreement_does_not_confirm(self):
+        s = filled("ticket")
+        s["pending"] = None
+        s["departments_confirmed"] = False
+        s["stage"] = "departments"
+        send(s, "Yes if that is definitely the cause", action="question", routing_agreement=True)
+        self.assertFalse(s["departments_confirmed"])
+        self.assertEqual(s["records"], [])
+
+    def test_ac_vent_uncertainty_is_kept_in_routing(self):
+        s = new_session()
+        send(s, "Maybe the AC vents, I am not sure", has_issue=True, departments=["drivability"],
+             summary="Hissing may come from AC vents; customer is unsure.")
+        self.assertIn("interior", s["fields"]["departments"])
+        self.assertIn("unsure", s["fields"]["summary"])
+
+    def test_omitted_vent_observation_survives_customer_and_time_updates(self):
+        s = new_session()
+        send(s, "Maybe the AC vents but I dont see smoke", has_issue=True,
+             departments=["drivability"], summary="Hissing noise while parked.")
+        self.assertIn("AC-vent", s["fields"]["summary"])
+        self.assertIn("no visible smoke", s["fields"]["summary"])
+        note = s["fields"]["summary"]
+        s["stage"] = "collect"
+        s["intent"] = "appointment"
+        s["departments_confirmed"] = True
+        send(s, "My name is Calvin", updates={"customer_name": {"value": "Calvin", "evidence": "Calvin"}},
+             summary="Suggested departments for inspection: drivability")
+        self.assertEqual(s["fields"]["summary"], note)
+
+    def test_requested_work_has_inspection_default_and_explicit_service_label(self):
+        s = filled()
+        self.assertEqual(s["pending"]["fields"]["expected_work"], "Diagnostic inspection of reported concern")
+        send(s, "I want my tire changed", action="revise", updates={
+            "expected_work": {"value": "tire changed", "evidence": "tire changed"}})
+        self.assertEqual(s["pending"]["fields"]["expected_work"], "Customer-requested tire replacement")
+
+    def test_options_collapse_after_first_action(self):
+        app = AppTest.from_file("app.py").run()
+        next(button for button in app.button if button.label == "Show available times").click().run()
+        self.assertFalse(app.exception)
+        self.assertIn("Need something else?", [item.label for item in app.expander])
+        self.assertNotIn("How can I help?", [item.value for item in app.subheader])
+
     def test_uncertain_customer_and_casual_department_agreement(self):
         s = new_session()
         send(s, "my car is not turning on whens the soonest you can take a look at it",

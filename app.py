@@ -56,14 +56,19 @@ def main():
         label = "Confirm departments" if session["stage"] == "departments" else "Confirm displayed details"
         if st.button(label):
             action = (label, "confirm")
-    st.subheader("How can I help?")
     options = (("Describe a vehicle concern", "triage"), ("Schedule an appointment", "appointment"),
                ("Create a service ticket", "ticket"), ("Review technician summary", "summary"),
                ("Show available times", "openings"), ("Contact a service advisor", "human"))
-    columns = st.columns(2)
-    for index, (label, kind) in enumerate(options):
-        if columns[index % 2].button(label, width="stretch"):
-            action = (label, kind)
+    if len(session["messages"]) == 1:
+        st.subheader("How can I help?")
+        menu = st.container()
+    else:
+        menu = st.expander("Need something else?")
+    with menu:
+        columns = st.columns(2)
+        for index, (label, kind) in enumerate(options):
+            if columns[index % 2].button(label, width="stretch"):
+                action = (label, kind)
     text = st.chat_input("Tell me what's going on, or what you need help with...")
     if action or text:
         def active_client():
