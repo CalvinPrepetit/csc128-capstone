@@ -15,7 +15,7 @@ def get_client():
 
 def main():
     st.set_page_config(page_title="Auto Shop Service Advisor")
-    st.title("Auto Shop Service Advisor and Intake Bot")
+    st.title("Auto Shop Service Advisor")
     st.caption("You are chatting with automated software for a fictional auto shop.")
     st.caption("Demo intake requests only. A qualified technician must inspect the vehicle; no repair is diagnosed or authorized here.")
     if "capstone_session" not in st.session_state:
@@ -56,13 +56,15 @@ def main():
         label = "Confirm departments" if session["stage"] == "departments" else "Confirm displayed details"
         if st.button(label):
             action = (label, "confirm")
-    with st.expander("Choose what you need"):
-        for label, kind in (("Department guidance", "triage"), ("Reserve an appointment", "appointment"),
-                            ("Create a service ticket", "ticket"), ("Review technician summary", "summary"),
-                            ("Show available times", "openings")):
-            if st.button(label):
-                action = (label, kind)
-    text = st.chat_input("Describe your issue, give details, or tell me what to change...")
+    st.subheader("How can I help?")
+    options = (("Describe a vehicle concern", "triage"), ("Schedule an appointment", "appointment"),
+               ("Create a service ticket", "ticket"), ("Review technician summary", "summary"),
+               ("Show available times", "openings"), ("Contact a service advisor", "human"))
+    columns = st.columns(2)
+    for index, (label, kind) in enumerate(options):
+        if columns[index % 2].button(label, width="stretch"):
+            action = (label, kind)
+    text = st.chat_input("Tell me what's going on, or what you need help with...")
     if action or text:
         def active_client():
             if simulate_failure:

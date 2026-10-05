@@ -1,4 +1,4 @@
-# Auto Shop Service Advisor and Intake Bot
+# Auto Shop Service Advisor
 
 Calvin A. Prepetit - CSC-128 Capstone
 
@@ -29,7 +29,8 @@ Each request covers 1 vehicle. For another vehicle, start a separate request.
 - Symptom intake collects up to 3 focused observations before routing, with a Skip question button.
 - Symptom dates/times stay in the technician history; they do not fill appointment slots.
 - Confirm suggested departments before proceeding. A suggestion is not a diagnosis.
-- Ask for appointments, a ticket, or a summary in chat, or use Choose what you need.
+- Ask for appointments, a ticket, or a summary in chat, or use the visible How can I help buttons.
+- Contact a service advisor gives a human handoff message while keeping current details.
 - Review the exact preview before a save. The model cannot write records.
 - Corrections require a fresh preview and confirmation. A weekday-only change clears the old time.
 - Clear agreement such as "Great yes please" works. Thanks alone and questions do not save.
@@ -103,7 +104,7 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 34 no-key tests passed. The focused live samples completed
+Verification checkpoint: 35 no-key tests passed. The focused live samples completed
 6 booking turns, 5 triage/summary turns, and 6 ticket turns. Earlier failed runs
 remain in the development reports; they are not counted as passes. The model
 request uses [Groq strict structured outputs](https://console.groq.com/docs/structured-outputs)

@@ -370,10 +370,20 @@ class ConversationTests(unittest.TestCase):
         app = AppTest.from_file("app.py").run()
         self.assertFalse(app.exception)
         self.assertIn("automated software", app.caption[0].value)
+        self.assertEqual(app.title[0].value, "Auto Shop Service Advisor")
+        self.assertIn("Schedule an appointment", [button.label for button in app.button])
         app.checkbox[0].check().run()
         app.chat_input[0].set_value("My car rattles").run()
         self.assertFalse(app.exception)
         self.assertIn("temporarily unavailable", app.session_state["capstone_session"]["messages"][-1]["content"])
+
+    def test_human_handoff_keeps_current_intake(self):
+        s = filled()
+        pending = deepcopy(s["pending"])
+        reply = process_turn("I'd like to talk to someone", s, Mock())
+        self.assertIn("contact the shop directly", reply)
+        self.assertEqual(s["pending"], pending)
+        self.assertEqual(s["records"], [])
 
 if __name__ == "__main__":
     unittest.main()

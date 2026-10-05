@@ -9,10 +9,15 @@ from knowledge import DEPARTMENTS, policy_answer
 from model_client import MODEL, interpret
 from tools import find_openings, normalize_day, normalize_time, save_record, validate_fields
 
-GREETING = ("Welcome to the Auto Shop Service Advisor and Intake Bot. Tell me what is "
-            "happening with your vehicle in your own words. You do not need to know "
-            "which department handles it. I can help route the concern, reserve a demo "
-            "visit, prepare a service ticket, or review a technician summary.")
+GREETING = ("Welcome! I'm your Auto Shop Service Advisor.\n\n"
+            "In your own words, describe what's going on with your vehicle. "
+            "I'll help organize the details for the right department and technicians to review.\n\n"
+            "I can help you:\n\n"
+            "- Describe a vehicle concern and find the right service area.\n"
+            "- Schedule a service appointment.\n"
+            "- Prepare a service ticket.\n"
+            "- Review a technician summary.\n\n"
+            "Choose an option below, or type a message to get started.")
 REFUSALS = {
     "price": "I cannot give an exact repair price. Please ask a human service advisor for pricing.",
     "warranty": "I cannot decide warranty coverage. Please ask the manufacturer or dealer to review it.",
@@ -253,6 +258,10 @@ def handle(text, session, client_factory, control=None):
         return "The unfinished conversation was cleared. Saved requests are unchanged. " + GREETING
     if re.search(r"\b(?:delete|erase|wipe)\b.*\b(?:records?|requests?|appointments?|everything)\b", clean):
         return "I cannot delete saved records. Type cancel to discard an unfinished conversation."
+    if control == "human" or re.search(r"\b(?:talk|speak|connect) (?:to|with) (?:a |an |the )?(?:someone|person|human|advisor|service advisor|technician)\b", clean):
+        return ("For a person to help, please contact the shop directly. This classroom demo "
+                "cannot connect you to a live employee. I can help prepare a technician summary "
+                "to share with a service advisor. Your current details are still here.")
     answering_issue = session["stage"] == "clarify" and not control
     if control == "confirm" or (not answering_issue and clear_agreement(text)):
         return confirm(session)
