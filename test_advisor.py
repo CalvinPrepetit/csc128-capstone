@@ -42,6 +42,39 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_uncertain_customer_and_casual_department_agreement(self):
+        s = new_session()
+        send(s, "my car is not turning on whens the soonest you can take a look at it",
+             intent="triage", action="question", has_issue=True, departments=["electrical"],
+             summary="", clarification="When can you bring the car in?")
+        self.assertTrue(s["fields"]["summary"])
+        reply = process_turn("I guess im not sure to be honest", s, Mock())
+        self.assertIn("do not need to know the cause", reply)
+        self.assertEqual(s["intent"], "appointment")
+        self.assertEqual(s["stage"], "departments")
+        reply = process_turn("Sur why not", s, Mock())
+        self.assertIn("name", reply)
+        self.assertTrue(s["departments_confirmed"])
+        self.assertEqual(s["records"], [])
+
+    def test_unsure_clarification_and_repeated_symptom_keep_context(self):
+        s = new_session()
+        send(s, "turn the key and just clicking", intent="triage", has_issue=True,
+             departments=["electrical"], summary="No start; clicking when key is turned.",
+             clarification="When did this start?")
+        reply = process_turn("Im unsure", s, Mock())
+        self.assertEqual(s["stage"], "departments")
+        reply = send(s, "Again it just clicks", action="other")
+        self.assertIn("Suggested departments", reply)
+        self.assertIn("electrical", s["fields"]["departments"])
+        self.assertEqual(s["intent"], "triage")
+
+    def test_casual_routing_agreement_never_authorizes_record_write(self):
+        s = filled()
+        send(s, "Sur why not", action="other")
+        self.assertEqual(s["records"], [])
+        self.assertIsNotNone(s["pending"])
+
     def test_all_details_volunteered_then_two_confirmations(self):
         s = new_session()
         text = "Calvin 2020 Chevy Suburban oil change Friday 9am"

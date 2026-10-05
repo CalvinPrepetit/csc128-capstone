@@ -32,6 +32,8 @@ Each request covers 1 vehicle. For another vehicle, start a separate request.
 - Review the exact preview before a save. The model cannot write records.
 - Corrections require a fresh preview and confirmation. A weekday-only change clears the old time.
 - Clear agreement such as "Great yes please" works. Thanks alone and questions do not save.
+- Being unsure about the cause keeps the suggested routing available. Casual routing agreement does not itself save a request.
+- Asking for the soonest visit keeps appointment intent through later symptom replies.
 - Repeated confirmation does not create duplicates. Reserved times disappear from this session's openings.
 - Cancel or Start Over clears unfinished work while preserving this session's saved requests.
 - Changes to saved records require a human service advisor. There is no deletion tool.
@@ -100,12 +102,31 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 29 no-key tests passed. The focused live samples completed
+Verification checkpoint: 32 no-key tests passed. The focused live samples completed
 6 booking turns, 5 triage/summary turns, and 6 ticket turns. Earlier failed runs
 remain in the development reports; they are not counted as passes. The model
 request uses [Groq strict structured outputs](https://console.groq.com/docs/structured-outputs)
 to prevent missing JSON fields, with Python validation still required for meaning,
 customer evidence, exact values, and consent.
+
+The reported no-start conversation was also replayed with the live model: 7 turns
+reached available times while retaining the clicking symptom, appointment intent,
+and confirmed electrical routing. Earlier failures remain in development reports.
+
+## Continuity with Earlier Assignments
+
+The capstone carries forward the 5 service departments and multiple matches from
+Assignments 1 and 3, staged conversation and restart from Assignment 2, missing
+slots, corrections, time validation and review-before-confirmation from Assignment
+4, Groq, bounded conversation history, disclosure and failure handling from
+Assignment 5, TF-IDF document retrieval from Assignment 6, and local availability
+and record tools from Assignment 7. The code stays in small Python modules with
+the Streamlit interface separate from conversation logic.
+
+The scope uses 1 vehicle per request rather than Assignment 4's vehicle count.
+Saved requests require a human for changes; corrections remain available before
+saving. Model interpretation uses a complete structured response rather than
+Assignment 5's streamed prose so Python can validate it before advancing or saving.
 
 To demonstrate failure without consuming API quota, enable Simulate API outage
 in the sidebar, submit a new issue, show the recovery message, and turn it off.

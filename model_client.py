@@ -68,6 +68,12 @@ More than one department may apply; cabin AC may involve interior/electrical.
 intent triage = routing help only; appointment = select/reserve a visit; ticket =
 service request (may be unscheduled); summary = review an intake note without saving.
 Use continue for missing details or confirmation, preserving the existing intent.
+Asking when the shop can take a look, the soonest opening, or when they can bring
+the car in is appointment intent, even when combined with a symptom description.
+Keep appointment intent on later symptom replies; do not switch to triage unless
+the customer explicitly asks to change tasks. Repeated symptoms do not erase context.
+At department confirmation, uncertainty about the cause is not declining service.
+Casual agreement such as 'sure why not' agrees to the suggested intake routing.
 confirm means clear CURRENT unconditional agreement to the exact displayed preview.
 'great yes please', 'works for me', 'go ahead' are valid. Any correction or added
 issue/work means revise, even with yes. Questions, thanks alone, conditional or

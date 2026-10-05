@@ -61,6 +61,12 @@ def clear_agreement(text):
         r"(?:yes|y|yep|yup|yeah|yea|confirm|correct|looks good|works for me|that works|go ahead(?: and (?:save|book) it)?|yes that s correct|yes thats correct)"
         r"(?: (?:please|thanks|thank you|thankyou|that s correct|thats correct))*", normalize(text)))
 
+def uncertain_reply(text):
+    return bool(re.fullmatch(
+        r"(?:(?:i guess|honestly|to be honest) )?(?:i m |im |i am )?"
+        r"(?:unsure|not sure|i don t know|i dont know|idk)"
+        r"(?: (?:to be honest|honestly))?", normalize(text)))
+
 def openings_text(session):
     session["openings"] = find_openings(session["records"])
     session["tool_log"].append({"tool": "find_openings", "result": deepcopy(session["openings"])})
@@ -177,6 +183,8 @@ def apply_updates(result, text, session):
     if result["has_issue"] or first_concern:
         if result["summary"]:
             session["fields"]["summary"] = result["summary"]
+        elif first_concern and result["has_issue"]:
+            session["fields"]["summary"] = text
         departments = list(dict.fromkeys(result["departments"]))
         if departments:
             session["fields"]["departments"] = departments
@@ -226,7 +234,14 @@ def handle(text, session, client_factory, control=None):
         return confirm(session)
     if control == "skip":
         return advance(session)
-    if session["stage"] == "clarify" and clean in {"i don t know", "i dont know", "not sure", "i m not sure", "idk", "unsure"}:
+    if session["stage"] == "departments" and uncertain_reply(text):
+        return ("You do not need to know the cause or choose a department yourself. "
+                "This is just a suggested starting point for a technician to inspect. "
+                "May I use " + ", ".join(session["fields"]["departments"]) +
+                " for the intake? Reply yes or choose Confirm departments. Nothing is booked yet.")
+    if session["stage"] == "departments" and clean in {"sure", "sure why not", "sur why not", "sounds good", "that sounds good"}:
+        return confirm(session)
+    if session["stage"] == "clarify" and uncertain_reply(text):
         return advance(session)
     if clean in {"no", "no thanks"}:
         invalidate(session)
@@ -250,6 +265,11 @@ def handle(text, session, client_factory, control=None):
     if session["pending"] and consent_conflict(text) and "?" not in text:
         invalidate(session)
     result = interpret(text, session, client_factory())
+    asks_for_visit = bool(re.search(r"\b(?:soonest|earliest)\b|\bwhen(?:s| can| could| would).*\b(?:look|bring|take|appointment|available)\b", clean))
+    if asks_for_visit and not result["refusal"]:
+        result["intent"] = "appointment"
+    elif session["intent"] == "appointment" and result["intent"] == "triage" and result["has_issue"]:
+        result["intent"] = "continue"
     if result["action"] == "cancel":
         return handle("cancel", session, client_factory)
     prefixes = []
@@ -273,7 +293,7 @@ def handle(text, session, client_factory, control=None):
     if result["action"] == "decline":
         return handle("no", session, client_factory)
     if not changing and (result["action"] in {"question", "other"} or prefix):
-        return prefix or ("No request was saved. Ask about the displayed details, tell me what to change, or reply yes to confirm." if session["pending"] else "Tell me about your vehicle issue, or ask for appointments, a ticket, or a technician summary.")
+        return prefix or ("No request was saved. Ask about the displayed details, tell me what to change, or reply yes to confirm." if session["pending"] else advance(session))
     candidate = deepcopy(session)
     invalidate(candidate)
     try:
@@ -288,7 +308,7 @@ def handle(text, session, client_factory, control=None):
         candidate["fields"]["day"] = candidate["fields"]["time"] = ""
     session.update(candidate)
     clarification = result["clarification"].strip()
-    needs_more_routing_detail = session["questions_asked"] == 0 or not session["fields"]["departments"]
+    needs_more_routing_detail = (session["questions_asked"] == 0 and session["intent"] == "triage") or not session["fields"]["departments"]
     if result["has_issue"] and clarification and session["questions_asked"] < 2 and needs_more_routing_detail:
         question = clarification.split("?")[0].strip(" -\n") + "?"
         session["questions_asked"] += 1
