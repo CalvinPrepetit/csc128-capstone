@@ -28,7 +28,7 @@ def new_session(records=None):
     return {"messages": [{"role": "assistant", "content": GREETING}], "original_messages": [],
             "fields": {"customer_name": "", "vehicle": "", "expected_work": "", "day": "", "time": "", "departments": [], "summary": ""},
             "reasons": {}, "intent": "triage", "stage": "collect", "questions_asked": 0,
-            "departments_confirmed": False, "revision": 0, "pending": None,
+            "departments_confirmed": False, "revision": 0, "pending": None, "issue_messages": [], "last_question": "",
             "records": [] if records is None else records, "tool_log": [], "openings": [], "last_saved": None}
 
 def friendly_error(error):
@@ -66,6 +66,27 @@ def uncertain_reply(text):
         r"(?:(?:i guess|honestly|to be honest) )?(?:i m |im |i am )?"
         r"(?:unsure|not sure|i don t know|i dont know|idk)"
         r"(?: (?:to be honest|honestly))?", normalize(text)))
+
+def intake_question(session, proposed):
+    """Keep common missing observations from being skipped by an empty model question."""
+    details = normalize(session["fields"]["summary"] + " " + " ".join(session.get("issue_messages", [])))
+    onset = re.search(r"\b(?:today|yesterday|morning|mornin|evening|ago|since|started|first noticed|monday|mondya|tuesday|wednesday|thursday|friday|saturday|sunday)\b", details)
+    if session["questions_asked"] == 0 and not onset:
+        return "When did you first notice the problem?"
+    no_start = re.search(r"(?:won t|wont|will not|not|doesn t|doesnt).{0,18}(?:start|turn on|tur non)|no start", details)
+    if no_start:
+        if not re.search(r"\b(?:click|clicks|clicking|clickin|crank|cranks|cranking|silent|silence|nothing happens|no sound|buzz|buzzing)\b", details):
+            return "What do you hear when you try to start it?"
+        if not re.search(r"\b(?:lights?|dashboard|dash)\b", details):
+            return "Do the dashboard lights turn on when you turn the key?"
+    elif re.search(r"\b(?:rattle|rattles|rattling|rattlin|noise|squeak|squeaking|grinding)\b", details):
+        if not re.search(r"\b(?:idle|idling|braking|accelerating|turning|driving|speed|stopped|moving)\b", details):
+            return "When do you hear the noise?"
+        if not re.search(r"\b(?:front|back|rear|underneath|under|inside|outside|wheel|engine)\b", details):
+            return "Where does the noise seem to come from?"
+    elif session["questions_asked"] == 1 and not proposed:
+        return "What do you notice when the problem happens?"
+    return proposed
 
 def openings_text(session):
     session["openings"] = find_openings(session["records"])
@@ -106,7 +127,9 @@ def advance(session):
     if not session["departments_confirmed"]:
         session["stage"] = "departments"
         suggestions = "\n".join(f"- {d.title()}: {session['reasons'].get(d) or DEPARTMENTS[d]}" for d in f["departments"])
-        return "Suggested departments for inspection, not a diagnosis:\n\n" + suggestions + "\n\nDo these departments sound right? Reply yes or tell me what to change."
+        return ("Here is the technician note so far:\n\n" + f["summary"] +
+                "\n\nSuggested departments for inspection, not a diagnosis:\n\n" + suggestions +
+                "\n\nDoes this note describe the concern correctly? Reply yes to use this intake routing, or tell me what to change.")
     if session["intent"] == "triage":
         session["stage"] = "routed"
         return "Confirmed departments: " + ", ".join(f["departments"]) + ". I can now show available appointments, create an unscheduled service ticket, or review a technician summary."
@@ -230,7 +253,8 @@ def handle(text, session, client_factory, control=None):
         return "The unfinished conversation was cleared. Saved requests are unchanged. " + GREETING
     if re.search(r"\b(?:delete|erase|wipe)\b.*\b(?:records?|requests?|appointments?|everything)\b", clean):
         return "I cannot delete saved records. Type cancel to discard an unfinished conversation."
-    if control == "confirm" or clear_agreement(text):
+    answering_issue = session["stage"] == "clarify" and not control
+    if control == "confirm" or (not answering_issue and clear_agreement(text)):
         return confirm(session)
     if control == "skip":
         return advance(session)
@@ -243,7 +267,7 @@ def handle(text, session, client_factory, control=None):
         return confirm(session)
     if session["stage"] == "clarify" and uncertain_reply(text):
         return advance(session)
-    if clean in {"no", "no thanks"}:
+    if clean in {"no", "no thanks"} and not answering_issue:
         invalidate(session)
         session["stage"] = "change"
         return "No request was saved. Tell me what to change, or type cancel."
@@ -265,6 +289,17 @@ def handle(text, session, client_factory, control=None):
     if session["pending"] and consent_conflict(text) and "?" not in text:
         invalidate(session)
     result = interpret(text, session, client_factory())
+    # Symptom history is not a requested appointment, even if it contains a weekday/time.
+    explicit_visit = bool(re.search(r"\b(?:book|schedule|appointment|visit|bring|drop off|come in)\b", clean))
+    past_event = bool(re.search(r"\b(?:tried|started|noticed|heard|happened|this morning|yesterday)\b", clean))
+    symptom_answer = answering_issue and not explicit_visit
+    if symptom_answer or (past_event and result["has_issue"] and not explicit_visit):
+        result["updates"].pop("day", None)
+        result["updates"].pop("time", None)
+    if symptom_answer:
+        result["has_issue"] = True
+        result["action"] = "provide"
+        result["intent"] = "continue"
     asks_for_visit = bool(re.search(r"\b(?:soonest|earliest)\b|\bwhen(?:s| can| could| would).*\b(?:look|bring|take|appointment|available)\b", clean))
     if asks_for_visit and not result["refusal"]:
         result["intent"] = "appointment"
@@ -307,11 +342,22 @@ def handle(text, session, client_factory, control=None):
     if candidate["intent"] == "ticket" and re.search(r"\b(?:unscheduled|without an? appointment|no appointment)\b", clean):
         candidate["fields"]["day"] = candidate["fields"]["time"] = ""
     session.update(candidate)
+    if result["has_issue"] and not control:
+        session.setdefault("issue_messages", []).append(text)
+        if symptom_answer and not result["summary"]:
+            session["fields"]["summary"] += " Customer added: " + text
     clarification = result["clarification"].strip()
-    needs_more_routing_detail = (session["questions_asked"] == 0 and session["intent"] == "triage") or not session["fields"]["departments"]
-    if result["has_issue"] and clarification and session["questions_asked"] < 2 and needs_more_routing_detail:
+    routine = bool(re.search(r"\b(?:oil change|tire rotation|routine|scheduled maintenance)\b", clean))
+    if result["has_issue"] and session["questions_asked"] == 0 and not routine and not session["departments_confirmed"]:
+        clarification = intake_question(session, clarification)
+    elif symptom_answer:
+        clarification = intake_question(session, clarification)
+    if result["has_issue"] and clarification and session["questions_asked"] < 3 and not routine and not session["departments_confirmed"]:
         question = clarification.split("?")[0].strip(" -\n") + "?"
+        if question == session.get("last_question"):
+            return (prefix + "\n\n" if prefix else "") + advance(session)
         session["questions_asked"] += 1
+        session["last_question"] = question
         session["stage"] = "clarify"
         return (prefix + "\n\n" if prefix else "") + question + "\n\nIf you are unsure, say so or choose Skip question."
     return (prefix + "\n\n" if prefix else "") + advance(session)

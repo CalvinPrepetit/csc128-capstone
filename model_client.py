@@ -42,19 +42,30 @@ Never shorten or paraphrase evidence; it must be a contiguous exact substring.
 For names/vehicles/work use exact wording as value. Evidence for day/time must be
 the exact weekday/time token, not a sentence. A bare 'at 10' uses evidence '10';
 Python resolves it only against a unique displayed opening. Do not choose a time.
+day/time slots are ONLY requested visit times. 'This morning', 'Monday at 6am I
+tried starting it', and answers to when a symptom started belong in the technician
+summary, NEVER appointment slots. Relative times are valid symptom history.
 departments: array of approved names covering ALL current concerns.
 reasons: object with one short customer-friendly reason per proposed department.
 has_issue: boolean, whether latest text adds or corrects issue/symptom details
 OR requests routine service (an oil change counts as true).
-summary: brief technician note about symptoms and requested work ONLY. EXCLUDE
-customer name, vehicle, weekday, and appointment time: Python displays those separately.
+summary: cumulative technician note preserving symptoms, onset, circumstances,
+sounds, warning lights, and uncertainty from issue_messages and latest text.
+Include dates/times of symptom events. EXCLUDE customer name, vehicle and requested
+appointment times: Python displays those separately. Never drop earlier observations.
 On corrections update the note to reflect current facts, preserving uncertainty.
 Use only customer details; no diagnosis,
 no saved/confirmed/booked claims, no invented symptoms or requested work.
 clarification: ONE simple nontechnical question or empty. No compound questions.
-Ask only if too vague to route. At most 2 are allowed. Do not repeat questions.
-'I don't know' is valid; route with uncertainty or hand off. For rattles ask when
-OR where, never both. Do not require symptom questions for routine oil changes.
+Conduct a brief intake BEFORE suggesting departments to the customer. At most 3
+questions, one per turn. Start with onset if not already supplied, then ask the
+most useful missing observation for this issue. No-start: sound when starting,
+then dashboard lights if still unknown. Noise: when it occurs, then location.
+Other concerns: onset and relevant conditions/observable behavior. Don't repeat
+answered questions or demand knowledge of the cause. On sufficient detail set
+clarification empty. Short answers to last_question are symptom details, even yes/no
+or 'this morning'. 'I don't know' is valid; preserve uncertainty and move on.
+No symptom questions for routine service or a fully described concern.
 policy_topic: bring, drop_off, hours, departments, requests, unknown, or empty string.
 refusal: price, warranty, insurance, recall, diagnosis, saved_change, unsafe, unrelated, or empty string.
 Classify mixed messages too; a shop question can accompany a service request.
@@ -84,6 +95,7 @@ Changes to saved records mean saved_change, not a new request.
 def interpret(text, session, client):
     context = {"latest": text, "fields": session["fields"], "intent": session["intent"],
                "stage": session["stage"], "questions_asked": session["questions_asked"],
+               "last_question": session.get("last_question", ""), "issue_messages": session.get("issue_messages", []),
                "pending": ({"kind": session["pending"]["kind"], "fields": session["pending"]["fields"]} if session["pending"] else None),
                "openings": session.get("openings", []),
                "history": session["messages"][-8:], "department_guide": DEPARTMENTS}

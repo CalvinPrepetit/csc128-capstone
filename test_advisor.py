@@ -48,6 +48,7 @@ class ConversationTests(unittest.TestCase):
              intent="triage", action="question", has_issue=True, departments=["electrical"],
              summary="", clarification="When can you bring the car in?")
         self.assertTrue(s["fields"]["summary"])
+        process_turn("Skip question", s, Mock(), "skip")
         reply = process_turn("I guess im not sure to be honest", s, Mock())
         self.assertIn("do not need to know the cause", reply)
         self.assertEqual(s["intent"], "appointment")
@@ -203,6 +204,7 @@ class ConversationTests(unittest.TestCase):
         s = new_session()
         send(s, "Window stuck and seat torn", has_issue=True, departments=["electrical", "interior"], summary="Window stuck; seat torn.")
         self.assertEqual(s["fields"]["departments"], ["electrical", "interior"])
+        process_turn("Skip question", s, Mock(), "skip")
         process_turn("yes", s, Mock())
         self.assertTrue(s["departments_confirmed"])
 
@@ -219,6 +221,7 @@ class ConversationTests(unittest.TestCase):
                  "expected_work": {"value": "replace seat", "evidence": "replace seat"}})
         self.assertEqual(s["fields"]["customer_name"], "Carlos")
         self.assertEqual(s["fields"]["expected_work"], "")
+        process_turn("Skip question", s, Mock(), "skip")
         self.assertEqual(s["stage"], "departments")
 
     def test_empty_optional_slots_are_absent(self):
@@ -226,6 +229,7 @@ class ConversationTests(unittest.TestCase):
         send(s, "Carlos: seat torn", intent="ticket", has_issue=True, departments=["interior"],
              summary="Seat torn.", updates={"customer_name": {"value": "Carlos", "evidence": "Carlos"},
                                             "day": {}, "time": None, "expected_work": {}})
+        process_turn("Skip question", s, Mock(), "skip")
         self.assertEqual(s["stage"], "departments")
         self.assertEqual(s["fields"]["day"], "")
 
@@ -236,8 +240,43 @@ class ConversationTests(unittest.TestCase):
                          summary="Customer reports a rattle.", clarification="When does it happen? Where is it?")
             if number < 2:
                 self.assertEqual(reply.count("?"), 1)
-        self.assertEqual(s["questions_asked"], 1)
+        self.assertLessEqual(s["questions_asked"], 3)
         self.assertEqual(s["stage"], "departments")
+
+    def test_symptom_onset_is_not_appointment_time(self):
+        s = new_session()
+        send(s, "My car wont tur non and im not sure why", has_issue=True,
+             departments=["electrical"], summary="Car will not start.",
+             clarification="When did you first notice it?")
+        reply = send(s, "This morning", action="other", updates={
+            "day": {"value": "Monday", "evidence": "This morning"}},
+            summary="Car will not start; first noticed this morning.",
+            clarification="What do you hear when you turn the key?")
+        self.assertEqual(s["stage"], "clarify")
+        self.assertNotIn("validate", reply)
+        reply = send(s, "Today this mornin , mondya at 6am i tried starting it and all i heard was a clicking noise",
+            has_issue=True, departments=["electrical"], updates={
+                "day": {"value": "Monday", "evidence": "mondya"},
+                "time": {"value": "6am", "evidence": "6am"}},
+            summary="No start this morning at 6am; clicking when key turned.",
+            clarification="Do the dashboard lights turn on?")
+        self.assertEqual(s["fields"]["day"], "")
+        self.assertEqual(s["fields"]["time"], "")
+        self.assertEqual(s["stage"], "clarify")
+        reply = send(s, "yes", action="confirm", summary="No start this morning at 6am; clicking; dashboard lights turn on.")
+        self.assertEqual(s["stage"], "departments")
+        self.assertIn("dashboard lights", reply)
+        self.assertEqual(s["records"], [])
+
+    def test_noise_intake_keeps_conditions_and_location(self):
+        s = new_session()
+        send(s, "My car rattles", has_issue=True, departments=["drivability"],
+             summary="Rattling.", clarification="When do you hear it?")
+        send(s, "Only at idle", summary="Rattling only at idle.", clarification="Where does it seem to come from?")
+        reply = send(s, "Underneath near the back", summary="Rattling only at idle, underneath near the back.")
+        self.assertEqual(s["stage"], "departments")
+        self.assertIn("idle", reply)
+        self.assertIn("near the back", reply)
 
     def test_mixed_policy_and_intake(self):
         s = new_session()
