@@ -288,7 +288,8 @@ def handle(text, session, client_factory, control=None):
         candidate["fields"]["day"] = candidate["fields"]["time"] = ""
     session.update(candidate)
     clarification = result["clarification"].strip()
-    if result["has_issue"] and clarification and session["questions_asked"] < 2:
+    needs_more_routing_detail = session["questions_asked"] == 0 or not session["fields"]["departments"]
+    if result["has_issue"] and clarification and session["questions_asked"] < 2 and needs_more_routing_detail:
         question = clarification.split("?")[0].strip(" -\n") + "?"
         session["questions_asked"] += 1
         session["stage"] = "clarify"

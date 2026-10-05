@@ -203,7 +203,7 @@ class ConversationTests(unittest.TestCase):
                          summary="Customer reports a rattle.", clarification="When does it happen? Where is it?")
             if number < 2:
                 self.assertEqual(reply.count("?"), 1)
-        self.assertEqual(s["questions_asked"], 2)
+        self.assertEqual(s["questions_asked"], 1)
         self.assertEqual(s["stage"], "departments")
 
     def test_mixed_policy_and_intake(self):
