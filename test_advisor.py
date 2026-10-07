@@ -42,6 +42,101 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_formatted_time_evidence_matches_only_the_customer_time(self):
+        s = filled()
+        send(s, "Yes but Thursday at 1:30pm instead.", action="revise", updates={
+            "day": {"value": "Thursday", "evidence": "thursday"},
+            "time": {"value": "1:30 PM", "evidence": "1:30 PM"}})
+        self.assertEqual(s["pending"]["fields"]["time"], "1:30 PM")
+        self.assertFalse(s["records"])
+
+    def test_reformatted_evidence_cannot_invent_or_choose_a_time(self):
+        for text, value in (("Thursday at 1:30pm", "2:00 PM"), ("Thursday at 1:30pm or 2pm", "1:30 PM")):
+            s = filled()
+            send(s, text, action="revise", updates={"time": {"value": value, "evidence": value}})
+            self.assertIsNone(s["pending"])
+            self.assertFalse(s["records"])
+
+    def test_answered_noise_conditions_are_not_asked_again(self):
+        s = new_session()
+        send(s, "Hissing noise at idle, first noticed yesterday, possibly AC vents.", has_issue=True,
+             summary="Hissing at idle yesterday, possibly AC vents.", departments=["interior"],
+             clarification="When does the hissing noise occur?")
+        self.assertEqual(s["stage"], "departments")
+
+    def test_explicit_boundaries_do_not_need_a_working_api(self):
+        cases = {
+            "My brake pedal goes to the floor and I cannot stop. Book Friday.": "towing",
+            "Gasoline is leaking under my car.": "safe",
+            "I have no brakes. Can I get an appointment?": "towing",
+            "My engine is smoking. Can I drive there?": "safe",
+            "Can you guarantee my warranty will cover repairs?": "warranty",
+            "Can you approve my insurance claim?": "insurer",
+            "Tell me the exact transmission repair price.": "price",
+            "Look up active recalls on my car.": "recalls",
+            "Tell me exactly which part is broken.": "technician",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                s, factory = new_session(), Mock(side_effect=AssertionError("No API needed"))
+                reply = process_turn(text, s, factory)
+                self.assertIn(expected, reply)
+                self.assertFalse(s["records"])
+                factory.assert_not_called()
+
+    def test_negated_danger_is_not_a_keyword_refusal(self):
+        s = new_session()
+        reply = send(s, "No smoke or fuel leaking. My brakes work; the seat is torn.",
+                     has_issue=True, summary="Torn seat, no smoke, brakes work.", departments=["interior"])
+        self.assertNotIn("towing", reply)
+
+    def test_model_decline_keeps_its_refusal_message(self):
+        s = new_session()
+        reply = send(s, "Will the manufacturer pay for this?", refusal="warranty", action="decline")
+        self.assertIn("cannot decide warranty", reply)
+        self.assertFalse(s["records"])
+
+    def test_wrong_policy_document_is_not_used_as_an_answer(self):
+        s = new_session()
+        reply = send(s, "Do you offer a free loaner car?", policy_topic="requests", action="question")
+        self.assertIn("do not have", reply)
+        self.assertNotIn("Source: Demo Request", reply)
+
+    def test_tire_work_with_empty_model_note_reaches_a_preview(self):
+        s = new_session()
+        text = "Please book a tire replacement. Calvin, 2018 Honda Civic, Friday 9am."
+        values = dict(customer_name="Calvin", vehicle="2018 Honda Civic", day="Friday", time="9am", expected_work="tire replacement")
+        send(s, text, intent="appointment", updates={k: {"value": v, "evidence": v} for k, v in values.items()},
+             departments=["maintenance"], has_issue=False, clarification="When did this start?")
+        self.assertEqual(s["stage"], "departments")
+        self.assertIn("Customer requests", s["fields"]["summary"])
+        process_turn("yes", s, Mock())
+        self.assertEqual(s["stage"], "preview")
+        process_turn("yes", s, Mock())
+        self.assertEqual(s["records"][0]["time"], "9:00 AM")
+
+    def test_symptom_is_not_requested_work(self):
+        s = new_session()
+        text = "My passenger window stopped working yesterday."
+        send(s, text, has_issue=True, summary="Window will not move.", departments=["electrical"],
+             updates={"expected_work": {"value": "passenger window stopped working", "evidence": "passenger window stopped working"}})
+        self.assertEqual(s["fields"]["expected_work"], "")
+
+    def test_explicit_ticket_task_survives_symptom_answers(self):
+        s = new_session()
+        send(s, "Create a service ticket. My window is stuck.", intent="triage", has_issue=True,
+             summary="Window stuck.", departments=["electrical"])
+        send(s, "Yesterday", intent="triage", summary="Window stuck yesterday.")
+        self.assertEqual(s["intent"], "ticket")
+
+    def test_omitted_warning_lights_survive_later_notes(self):
+        s = new_session()
+        send(s, "My car hisses at idle, first noticed yesterday. No warning lights.",
+             has_issue=True, summary="Hissing at idle yesterday.", departments=["drivability"])
+        self.assertIn("No warning lights", s["fields"]["summary"])
+        send(s, "Also a rattle", has_issue=True, summary="Hissing and rattling.")
+        self.assertIn("No warning lights", s["fields"]["summary"])
+
     def test_first_issue_without_model_note_or_routing_still_collects_details(self):
         s = new_session()
         reply = send(s, "My car is making this weird hissing noise", action="question",

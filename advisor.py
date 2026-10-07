@@ -7,7 +7,10 @@ from uuid import uuid4
 from groq import APIConnectionError, APIError, AuthenticationError, RateLimitError
 from knowledge import DEPARTMENTS, policy_answer
 from model_client import MODEL, interpret
-from tools import find_openings, normalize_day, normalize_time, save_record, validate_fields
+from tools import (find_openings, normalize_day, normalize_time, save_record,
+                   validate_fields, slot_evidence)
+from intake import (normalize, boundary, requested_intent, requested_work,
+                    routine_service, policy_topic, preserve_observations)
 
 GREETING = ("Welcome! I'm your Auto Shop Service Advisor.\n\n"
             "In your own words, describe what's going on with your vehicle. "
@@ -44,9 +47,6 @@ def friendly_error(error):
     if isinstance(error, (APIConnectionError, APIError)):
         return "The advisor is temporarily unavailable. Please try again later. No request was saved."
     return "I could not interpret that response reliably. Please rephrase or try again. No request was saved."
-
-def normalize(text):
-    return " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
 
 def invalidate(session):
     session["pending"] = None
@@ -91,6 +91,9 @@ def intake_question(session, proposed):
             return "Where does the noise seem to come from?"
     elif session["questions_asked"] == 1 and not proposed:
         return "What do you notice when the problem happens?"
+    if re.search(r"when.*(?:hear|noise|sound|occur|hiss)", proposed, re.I) and re.search(
+            r"\b(?:idle|idling|braking|accelerating|turning|driving|parked|starting|stop light)\b", details):
+        return ""  # Do not ask for conditions the customer already supplied.
     return proposed
 
 def openings_text(session):
@@ -175,9 +178,13 @@ def apply_updates(result, text, session):
         if key == "expected_work" and (not isinstance(evidence, str) or evidence not in text or not isinstance(value, str) or value.casefold() not in evidence.casefold()):
             # Optional work must be explicitly requested; retain original symptoms instead.
             continue
+        if key == "expected_work" and not requested_work(value, text):
+            continue
         # Some models echo unchanged slots. They cannot introduce a new value this way.
         if isinstance(value, str) and value == session["fields"].get(key) and isinstance(evidence, str) and evidence not in text:
             continue
+        if key in {"day", "time"} and isinstance(value, str) and isinstance(evidence, str) and evidence not in text:
+            evidence = slot_evidence(key, value, text)
         if not isinstance(value, str) or not isinstance(evidence, str) or not evidence.strip() or evidence not in text or len(value) > 160:
             raise ValueError("Extracted field lacks customer evidence")
         if key in {"customer_name", "vehicle", "expected_work"}:
@@ -218,7 +225,9 @@ def apply_updates(result, text, session):
         if result["summary"]:
             session["fields"]["summary"] = result["summary"]
         elif first_concern and result["has_issue"]:
-            session["fields"]["summary"] = text
+            work = session["fields"]["expected_work"]
+            session["fields"]["summary"] = (f"Customer requests {work}." if work
+                                             else "Customer reports: " + text)
         departments = list(dict.fromkeys(result["departments"]))
         if departments:
             session["fields"]["departments"] = departments
@@ -227,7 +236,6 @@ def apply_updates(result, text, session):
             session["reported_vent_source"] = False
         if re.search(r"\b(?:ac|a c|air conditioning)\s+vents?\b", normalize(text)) and not re.search(r"\b(?:not|isn t|isnt)\s+(?:the )?(?:ac|a c|air conditioning)\b", normalize(text)):
             session["reported_vent_source"] = True
-            session["reported_no_smoke"] = bool(re.search(r"\b(?:no smoke|don t see smoke|dont see smoke)\b", normalize(text)))
             if "interior" not in session["fields"]["departments"]:
                 session["fields"]["departments"].append("interior")
             session["reasons"]["interior"] = "Possible cabin vent source reported by the customer; inspection is needed."
@@ -237,13 +245,8 @@ def apply_updates(result, text, session):
         session["fields"]["departments"] = result["departments"]
         session["reasons"] = result["reasons"]
         session["departments_confirmed"] = False
-    onset = session.get("issue_onset", "")
-    if onset and normalize(onset) not in normalize(session["fields"]["summary"]):
-        session["fields"]["summary"] += " First noticed: " + onset + "."
     if session.get("reported_vent_source") and "vent" not in session["fields"]["summary"].lower():
         session["fields"]["summary"] += " Customer reports a possible AC-vent source; location is uncertain."
-    if session.get("reported_no_smoke") and "smoke" not in session["fields"]["summary"].lower():
-        session["fields"]["summary"] += " Customer reports no visible smoke."
 
 def confirm(session):
     if session["stage"] == "departments":
@@ -283,6 +286,11 @@ def handle(text, session, client_factory, control=None):
         return ("For a person to help, please contact the shop directly. This classroom demo "
                 "cannot connect you to a live employee. I can help prepare a technician summary "
                 "to share with a service advisor. Your current details are still here.")
+    refusal = boundary(text) if not control else ""
+    if refusal:
+        invalidate(session)
+        session["tool_log"].append({"tool": "intake_boundary", "reason": refusal})
+        return REFUSALS[refusal]
     answering_issue = session["stage"] == "clarify" and not control
     if control == "confirm" or (not answering_issue and clear_agreement(text)):
         return confirm(session)
@@ -319,6 +327,16 @@ def handle(text, session, client_factory, control=None):
     if session["pending"] and consent_conflict(text) and "?" not in text:
         invalidate(session)
     result = interpret(text, session, client_factory())
+    # Task choice and explicit work survive a model's overly broad triage label.
+    task = requested_intent(text)
+    if task:
+        result["intent"] = task
+    elif session["intent"] in {"appointment", "ticket", "summary"} and result["intent"] == "triage":
+        result["intent"] = "continue"
+    work = result["updates"].get("expected_work")
+    if isinstance(work, dict) and isinstance(work.get("value"), str) and requested_work(work["value"], text):
+        result["has_issue"] = True
+    result["policy_topic"] = policy_topic(text, result["policy_topic"])
     routing_ok = (session["stage"] == "departments" and result["routing_agreement"]
                   and not consent_conflict(text.replace("?", ""))
                   and (not result["has_issue"] or not result["departments"]
@@ -359,22 +377,20 @@ def handle(text, session, client_factory, control=None):
         if result["action"] == "confirm" and not consent_conflict(text):
             return confirm(session)
         return prefix or "Your saved request is unchanged. Start Over for a new request. " + REFUSALS["saved_change"]
-    requested_intent = result["intent"] not in {"continue", "information"} and result["intent"] != session["intent"]
-    changing = bool(result["updates"] or result["has_issue"] or result["action"] == "revise" or requested_intent or routing_ok)
+    intent_changed = result["intent"] not in {"continue", "information"} and result["intent"] != session["intent"]
+    changing = bool(result["updates"] or result["has_issue"] or result["action"] == "revise" or intent_changed or routing_ok)
     if result["action"] == "confirm" and not changing and not consent_conflict(text):
         return (prefix + "\n\n" if prefix else "") + confirm(session)
     if result["action"] == "decline":
-        return handle("no", session, client_factory)
+        return prefix or handle("no", session, client_factory)
     if not changing and (result["action"] in {"question", "other"} or prefix):
         return prefix or ("No request was saved. Ask about the displayed details, tell me what to change, or reply yes to confirm." if session["pending"] else advance(session))
     candidate = deepcopy(session)
     invalidate(candidate)
-    if result["action"] == "revise" and re.search(r"\b(?:onset|noticed|started)\b", clean):
-        candidate["issue_onset"] = ""
-    if symptom_answer and re.search(r"first notice|(?:did|does).*start|begin", session.get("last_question", ""), re.I):
-        candidate["issue_onset"] = text.strip()
     try:
         apply_updates(result, text, candidate)
+        if result["has_issue"]:
+            preserve_observations(candidate, text, session["last_question"] if symptom_answer else "")
     except ValueError as error:
         invalidate(session)
         session["tool_log"].append({"tool": "validate_updates", "error": str(error), "updates": result["updates"]})
@@ -388,10 +404,8 @@ def handle(text, session, client_factory, control=None):
     session.update(candidate)
     if result["has_issue"] and not control:
         session.setdefault("issue_messages", []).append(text)
-        if symptom_answer and not result["summary"]:
-            session["fields"]["summary"] += " Customer added: " + text
     clarification = result["clarification"].strip()
-    routine = bool(re.search(r"\b(?:oil change|tire rotation|routine|scheduled maintenance)\b", clean))
+    routine = routine_service(text)
     if result["has_issue"] and session["questions_asked"] == 0 and not routine and not session["departments_confirmed"]:
         clarification = intake_question(session, clarification)
     elif symptom_answer:

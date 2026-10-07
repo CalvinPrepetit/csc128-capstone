@@ -46,6 +46,20 @@ def normalize_time(value):
         raise ValueError("Use a valid 24-hour time.")
     return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
 
+def slot_evidence(key, value, text):
+    """Recover reformatted evidence only when one customer token proves the same value."""
+    weekdays = (r"\b(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|"
+                r"thu(?:rs?(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b")
+    times = (r"(?<![\w:])(?:\d{1,2}(?::[0-5]\d)?\s*[ap](?:\.?m\.?)?|"
+             r"\d{1,2}:[0-5]\d|noon)(?![\w:])")
+    pattern = weekdays if key == "day" else times
+    tokens = re.findall(pattern, text, re.I)
+    convert = normalize_day if key == "day" else normalize_time
+    if len(tokens) != 1 or convert(tokens[0]) != convert(value):
+        raise ValueError("Appointment value needs unambiguous customer evidence.")
+    return tokens[0]
+
+
 def find_openings(records):
     reserved = {(r.get("day"), r.get("time")) for r in records}
     return [{"day": d, "time": t} for d, t in OPENINGS if (d, t) not in reserved]

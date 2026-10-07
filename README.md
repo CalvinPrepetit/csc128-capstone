@@ -64,9 +64,16 @@ previews, and save validated requests.
 
 ## Files
 
+Explicit danger and unsupported decisions take priority over ordinary intake.
+Refusal messages survive model decline actions. Policy topics must match the
+question before their documents are used. Follow-up observations survive note
+revisions; requested service can use a factual service-only note without inventing
+a vehicle fault.
+
 - `app.py`: Streamlit interface, session state, controls, and request downloads.
 - `advisor.py`: conversation flow, slot filling, correction, and consent control.
 - `model_client.py`: structured Groq interpretation and response validation.
+- `intake.py`: explicit safety boundaries, task/work checks, and retained observations.
 - `tools.py`: exact values, availability, record validation, and saves.
 - `knowledge.py`: fictional guide and small retriever.
 - `test_advisor.py`: deterministic and simulated failure tests; no API key required.
@@ -109,7 +116,7 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 43 no-key tests passed. The focused live samples completed
+Verification checkpoint: 54 no-key tests passed. The focused live samples completed
 6 booking turns, 5 triage/summary turns, and 6 ticket turns. Earlier failed runs
 remain in the development reports; they are not counted as passes. The model
 request uses [Groq strict structured outputs](https://console.groq.com/docs/structured-outputs)
