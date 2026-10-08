@@ -101,16 +101,54 @@ def policy_topic(text, proposed):
     return proposed
 
 
+def starting_observations(text):
+    """Readable safeguards for reported starting behavior, never a cause or repair."""
+    facts = {}
+    if matches(r"\bcranks?\b", text) and matches(r"\b(?:won t|wont|will not|doesn t|doesnt) start\b", text):
+        facts["starting"] = "Vehicle cranks but does not consistently start"
+    if matches(r"\bable to get it (?:goin|going|running).{0,15}\b(?:little|briefly)\b|\b(?:starts? briefly|briefly starts?)\b", text):
+        facts["brief start"] = "The vehicle briefly starts"
+    if matches(r"\b(?:won t|wont|will not|doesn t|doesnt) (?:stay|remain|run).{0,12}\bidle\b", text):
+        facts["idle"] = "When running, the vehicle will not stay running at idle"
+    if matches(r"\blights?\b.{0,20}\bdim\b|\bdim\b.{0,10}\blights?\b", text):
+        facts["lighting"] = "Customer reports dim lights"
+    elif matches(r"\b(?:all (?:of )?(?:the )?)?lights?\b.{0,20}\b(?:are on|still on|stayed on|remain on|remaining on|illuminate)\b", text):
+        facts["lighting"] = "Customer reports the lights illuminate"
+    return facts
+
+
+def readable_fallback(text):
+    facts = starting_observations(text)
+    return ". ".join(facts.values()) + "." if "starting" in facts else ""
+
+
+def onset_observation(text):
+    if (matches(r"\btoday\b", text) and matches(r"\bstop ?light\b", text)
+            and matches(r"\b(?:turned off|shut off|stalled)\b", text)):
+        note = "First noticed today when the vehicle shut off at a stoplight"
+        if matches(r"\b(?:able to get it on|restarted|started again)\b", text) and matches(r"\bgas station\b", text):
+            note += "; restarted long enough to reach a gas station"
+        return note
+    return ""
+
+
 def preserve_observations(session, text, question=""):
     """Keep the latest answer per topic so revisions cannot silently erase observations."""
     observations = session.setdefault("observations", {})
+    facts = starting_observations(text)
+    observations.update(facts)
+    if "lighting" in facts and matches(r"\b(?:actually|correction|instead|not)\b", text):
+        # Remove the old lighting sentence; retained starting/idle facts are restored below.
+        session["fields"]["summary"] = ". ".join(
+            sentence.strip() for sentence in re.split(r"[.;]", session["fields"]["summary"])
+            if sentence.strip() and not matches(r"\blights?\b", sentence)) + "."
     if moving_stall(text):
         observations["stalling sequence"] = stalling_note(text)
     key = normalize(question)
     if re.search(r"first notice|(?:did|does).*start|begin", key):
         key = "onset"
     if key and not matches(r"\b(?:no warning lights|no smoke|no visible smoke)\b", text):
-        observations[key] = text.strip()
+        observations[key] = (onset_observation(text) if key == "onset" else "") or text.strip()
     elif matches(r"\b(?:actually|correction)\b.*\b(?:noticed|started|onset)\b", text):
         observations["onset"] = text.strip()
     for topic, pattern in {
@@ -123,6 +161,23 @@ def preserve_observations(session, text, question=""):
             observations.pop(topic, None)
     note = session["fields"]["summary"]
     for key, answer in observations.items():
+        if key == "onset" and answer.startswith("First noticed"):
+            if normalize(answer) not in normalize(note):
+                note += " " + answer + "."
+            continue
+        patterns = {"starting": r"\bcranks?\b.*\b(?:does not|won t|wont|not)\b.*\bstart\b",
+                    "brief start": r"\b(?:briefly starts?|starts? briefly)\b",
+                    "idle": r"\b(?:won t|wont|not|does not)\b.*\bidle\b",
+                    "lighting": r"\blights?\b.*\b(?:on|illuminate|illuminated)\b"}
+        if key in facts or key in patterns:
+            if key == "lighting" and "dim" in answer:
+                if matches(r"\bdim\b", note):
+                    continue
+            elif key in patterns and matches(patterns[key], note):
+                continue
+            if normalize(answer) not in normalize(note):
+                note += " " + answer + "."
+            continue
         if key == "stalling sequence":
             clues = {"driving": r"\bwhile (?:driving|moving)\b", "stoplight": r"\bstop ?light\b", "restarted": r"\b(?:restarted|started again|start again)\b",
                      "lights remained on": r"\blights\b.{0,30}\b(?:on|illuminated)\b", "today": r"\btoday\b"}

@@ -42,6 +42,63 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_no_start_note_is_readable_and_keeps_distinct_observations(self):
+        s = new_session()
+        send(s, "My car jsut wont start it kind of cranks and all the lights are on but it jsut wont start. i was able to get it goin a little bit but it wont stay at idle",
+             has_issue=True, departments=["electrical", "drivability"])
+        note = s["fields"]["summary"]
+        self.assertNotIn("jsut", note)
+        self.assertIn("cranks", note)
+        self.assertIn("idle", note)
+        self.assertIn("lights", note)
+        self.assertIn("briefly starts", note)
+        send(s, "today at the stop light, it turned off but i was able to get it on long enough to get to the gas station",
+             has_issue=True, summary="Customer reports the engine stalled today at a stoplight and restarted to reach a gas station.",
+             departments=["electrical", "drivability"])
+        note = s["fields"]["summary"]
+        for detail in ("cranks", "idle", "lights", "gas station"):
+            self.assertIn(detail, note)
+        self.assertNotIn("i was able", note)
+
+    def test_lighting_correction_replaces_the_old_observation(self):
+        s = new_session()
+        send(s, "It cranks but wont start, all the lights are on", has_issue=True,
+             summary="Vehicle cranks but does not start. All lights are on.", departments=["electrical"])
+        send(s, "Actually the lights are dim, not bright", has_issue=True,
+             summary="Vehicle cranks but does not start. All lights are on.", departments=["electrical"])
+        self.assertIn("dim lights", s["fields"]["summary"])
+        self.assertNotIn("lights are on", s["fields"]["summary"])
+        self.assertNotIn("lights illuminate", s["fields"]["summary"])
+        self.assertIn("cranks", s["fields"]["summary"])
+
+    def test_availability_comes_before_identity_without_a_save(self):
+        s = new_session()
+        s["fields"].update(summary="Customer reports an engine concern.", departments=["drivability"])
+        s["departments_confirmed"], s["stage"] = True, "routed"
+        reply = send(s, "yes when is the soonest you can get me in", intent="appointment", action="question")
+        self.assertIn("Available demo intake times", reply)
+        self.assertNotIn("Please provide your name", reply)
+        self.assertFalse(s["records"])
+        reply = process_turn("Thursday at 130", s, Mock())
+        self.assertIn("Please provide your name", reply)
+        self.assertEqual(s["fields"]["time"], "1:30 PM")
+        self.assertIsNone(s["pending"])
+
+    def test_time_only_selection_does_not_rewrite_the_note(self):
+        s = filled()
+        s["fields"]["day"], s["fields"]["time"] = "Thursday", ""
+        s["pending"], s["stage"] = None, "schedule"
+        note, factory = s["fields"]["summary"], Mock(side_effect=AssertionError("No API needed"))
+        process_turn("130 works", s, factory)
+        self.assertEqual(s["pending"]["fields"]["time"], "1:30 PM")
+        self.assertEqual(s["fields"]["summary"], note)
+        process_turn("Friday", s, factory)
+        process_turn("9am is good", s, factory)
+        self.assertEqual(s["pending"]["fields"]["time"], "9:00 AM")
+        self.assertEqual(s["fields"]["summary"], note)
+        self.assertFalse(s["records"])
+        factory.assert_not_called()
+
     def test_definition_question_preserves_intake_without_api(self):
         s, factory = filled("summary"), Mock(side_effect=AssertionError("No API needed"))
         pending = deepcopy(s["pending"])
@@ -294,8 +351,8 @@ class ConversationTests(unittest.TestCase):
                      action="question", routing_agreement=True, departments=["maintenance"])
         self.assertTrue(s["departments_confirmed"])
         self.assertEqual(s["intent"], "appointment")
-        self.assertEqual(s["stage"], "collect")
-        self.assertIn("name", reply)
+        self.assertEqual(s["stage"], "schedule")
+        self.assertIn("Available demo intake times", reply)
         self.assertEqual(s["records"], [])
 
     def test_conditional_routing_agreement_does_not_confirm(self):
@@ -354,7 +411,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(s["intent"], "appointment")
         self.assertEqual(s["stage"], "departments")
         reply = process_turn("Sur why not", s, Mock())
-        self.assertIn("name", reply)
+        self.assertIn("Available demo intake times", reply)
         self.assertTrue(s["departments_confirmed"])
         self.assertEqual(s["records"], [])
 

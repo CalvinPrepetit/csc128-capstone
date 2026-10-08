@@ -12,7 +12,8 @@ from model_client import MODEL, interpret
 from tools import (find_openings, normalize_day, normalize_time, save_record,
                    validate_fields, slot_evidence, visit_selection)
 from intake import (normalize, boundary, requested_intent, requested_work,
-                    routine_service, policy_topic, preserve_observations, moving_stall, stalling_note)
+                    routine_service, policy_topic, preserve_observations, moving_stall, stalling_note,
+                    readable_fallback)
 
 GREETING = ("Welcome! I'm your Auto Shop Service Advisor.\n\n"
             "In your own words, describe what's going on with your vehicle. "
@@ -163,10 +164,6 @@ def advance(session):
         return "Confirmed departments: " + ", ".join(f["departments"]) + ". I can now show available appointments, create an unscheduled service ticket, or review a technician summary."
     if session["intent"] == "summary":
         return prepare_preview(session, "summary")
-    missing = [label for key, label in (("customer_name", "name"), ("vehicle", "vehicle year, make, and model (or the details you know)")) if not f[key]]
-    if missing:
-        session["stage"] = "collect"
-        return "Please provide your " + " and ".join(missing) + ". I will keep the issue details already provided."
     kind = session["intent"]
     if kind == "appointment" or f["day"] or f["time"]:
         openings = openings_text(session)
@@ -179,6 +176,10 @@ def advance(session):
                             f"For {f['day']}, the available demo times are: " + ", ".join(choices) +
                             ". Which time would you like? These are repeating weekdays, not calendar dates.")
             return openings + "\n\n" + ("Your selected time is unavailable. " if f["day"] and f["time"] else "") + "Which day and time would you like?"
+    missing = [label for key, label in (("customer_name", "name"), ("vehicle", "vehicle year, make, and model (or the details you know)")) if not f[key]]
+    if missing:
+        session["stage"] = "collect"
+        return "Please provide your " + " and ".join(missing) + ". I will keep your selected time and issue details."
     return prepare_preview(session, kind)
 
 def apply_updates(result, text, session):
@@ -254,7 +255,7 @@ def apply_updates(result, text, session):
         elif first_concern and result["has_issue"]:
             work = session["fields"]["expected_work"]
             session["fields"]["summary"] = (f"Customer requests {work}." if work
-                                             else stalling_note(text) or "Customer reports: " + text)
+                                             else stalling_note(text) or readable_fallback(text) or "Customer reports: " + text)
         departments = list(dict.fromkeys(result["departments"]))
         if departments:
             session["fields"]["departments"] = departments
@@ -356,7 +357,7 @@ def handle(text, session, client_factory, control=None):
             invalidate(session)
             session["intent"] = "appointment"
             return advance(session)
-        selection = visit_selection(text, find_openings(session["records"]))
+        selection = visit_selection(text, find_openings(session["records"]), session["fields"]["day"])
         if selection:
             invalidate(session)
             session["intent"] = "appointment"
@@ -404,9 +405,13 @@ def handle(text, session, client_factory, control=None):
     # Symptom history is not a requested appointment, even if it contains a weekday/time.
     explicit_visit = bool(re.search(r"\b(?:book|schedule|appointment|visit|bring|drop off|come in)\b", clean))
     past_event = bool(re.search(r"\b(?:tried|started|noticed|heard|happened|this morning|yesterday)\b", clean))
-    identity_only = (any(result["updates"].get(key) for key in ("customer_name", "vehicle")) and
-                     (not result["has_issue"] or (re.search(r"\b(?:my name|i drive|my vehicle is)\b", clean) and
-                      not re.search(r"\b(?:issue|problem|noise|rattle|leak|stall|stalled|died|click|clicking|brakes|shaking|wont|won t|isnt|isn t|need|want)\b", clean))))
+    identity = [result["updates"][key] for key in ("customer_name", "vehicle") if result["updates"].get(key)]
+    remainder = text.casefold()
+    for item in identity:
+        if isinstance(item, dict) and isinstance(item.get("value"), str) and item["value"]:
+            remainder = remainder.replace(item["value"].casefold(), "")
+    identity_only = bool(identity) and (not result["has_issue"] or set(normalize(remainder).split()) <=
+                    {"well", "my", "name", "is", "and", "i", "drive", "a", "an", "its", "it", "s", "vehicle", "car", "please"})
     if identity_only:
         result["has_issue"] = False
         result["summary"] = result["clarification"] = ""

@@ -61,6 +61,11 @@ OR requests specific service (oil change and tire replacement both count as true
 Specific service always needs a note, e.g. 'Customer requests tire replacement.'
 summary: cumulative technician note preserving symptoms, onset, circumstances,
 sounds, warning lights, and uncertainty from issue_messages and latest text.
+Rewrite customer wording into clear third-person sentences; do not copy typos.
+Cranks-but-will-not-start, briefly starts, will-not-stay-at-idle, and lights-on
+are separate observations: preserve each, not just 'an idle problem'.
+When the latest reply only supplies identity or visit details, set has_issue=false
+and summary empty. Never rewrite the technician note during scheduling.
 Include dates/times of symptom events. EXCLUDE customer name, vehicle and requested
 appointment times: Python displays those separately. Never drop earlier observations.
 On corrections update the note to reflect current facts, preserving uncertainty.

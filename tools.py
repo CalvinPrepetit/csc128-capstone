@@ -65,7 +65,7 @@ def find_openings(records):
     return [{"day": d, "time": t} for d, t in OPENINGS if (d, t) not in reserved]
 
 
-def visit_selection(text, openings):
+def visit_selection(text, openings, current_day=""):
     """Resolve simple displayed choices locally; mixed requests remain with AI."""
     match = re.fullmatch(
         r"\s*(?:(?:can i come in|book|schedule|choose)\s+)?"
@@ -73,9 +73,14 @@ def visit_selection(text, openings):
         r"(?:\s+(?:at\s+)?(\d{1,4}(?::[0-5]\d)?\s*(?:[ap]m?)?))?"
         r"(?:\s+(?:then|please|is fine|works(?: fine)?|works for me))?[.!?]*\s*",
         text, re.I)
-    if not match:
-        return None
-    day, token = normalize_day(match[1]), match[2]
+    if match:
+        day, token = normalize_day(match[1]), match[2]
+    else:
+        match = re.fullmatch(r"\s*(\d{1,4}(?::[0-5]\d)?\s*(?:[ap]m?)?)"
+                             r"(?:\s+(?:works(?: fine)?|is good|is fine|please|then))?[.!?]*\s*", text, re.I)
+        if not match or not current_day:
+            return None
+        day, token = current_day, match[1]
     if not token:
         return day, ""
     token = token.strip().lower()
