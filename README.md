@@ -116,7 +116,7 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 79 no-key tests passed. Intake details now use evidence-backed,
+Verification checkpoint: 80 no-key tests passed. Intake details now use evidence-backed,
 AI-written observations retained by topic, avoiding repeated questions and raw-answer
 appendices. Explicit tire replacement stays requested work, not an authorized repair;
 speed units are not invented. The focused live samples completed

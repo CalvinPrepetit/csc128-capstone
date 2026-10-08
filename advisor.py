@@ -261,6 +261,11 @@ def apply_updates(result, text, session):
             session["fields"]["summary"] = (f"Customer requests {work}." if work
                                              else stalling_note(text) or readable_fallback(text) or "Customer reports: " + text)
         departments = list(dict.fromkeys(result["departments"]))
+        concern = normalize(text + " " + " ".join(session.get("issue_messages", [])))
+        if (session["fields"]["expected_work"] == "Customer-requested tire replacement"
+                and re.search(r"\b(?:noise|shaking|vibration|grinding|bumping)\b", concern)
+                and "drivability" not in departments):
+            departments.append("drivability")  # Requested tire work must not hide the reported fault.
         if departments:
             session["fields"]["departments"] = departments
             session["reasons"] = {d: DEPARTMENTS[d] for d in departments}

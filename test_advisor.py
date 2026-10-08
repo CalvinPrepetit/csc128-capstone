@@ -151,6 +151,16 @@ class ConversationTests(unittest.TestCase):
         self.assertIn("gas station", s["fields"]["summary"])
         self.assertIn("briefly starts", s["fields"]["summary"])
 
+    def test_tire_service_does_not_hide_a_reported_driving_fault(self):
+        s = new_session()
+        send(s, "tires need to be changed, bumping noise over 60", has_issue=True,
+             departments=["maintenance"], summary="Customer reports a bumping noise.")
+        self.assertEqual(set(s["fields"]["departments"]), {"maintenance", "drivability"})
+        routine = new_session()
+        send(routine, "tires need to be changed", has_issue=True,
+             departments=["maintenance"], summary="Customer requests tire replacement.")
+        self.assertEqual(routine["fields"]["departments"], ["maintenance"])
+
     def test_no_start_note_is_readable_and_keeps_distinct_observations(self):
         s = new_session()
         send(s, "My car jsut wont start it kind of cranks and all the lights are on but it jsut wont start. i was able to get it goin a little bit but it wont stay at idle. This started today.",
