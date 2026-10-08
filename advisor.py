@@ -260,7 +260,7 @@ def apply_updates(result, text, session):
             work = session["fields"]["expected_work"]
             session["fields"]["summary"] = (f"Customer requests {work}." if work
                                              else stalling_note(text) or readable_fallback(text) or "Customer reports: " + text)
-        departments = list(dict.fromkeys(result["departments"]))
+        departments = list(dict.fromkeys(result["departments"] or old_departments))
         concern = normalize(text + " " + " ".join(session.get("issue_messages", [])))
         if (session["fields"]["expected_work"] == "Customer-requested tire replacement"
                 and re.search(r"\b(?:noise|shaking|vibration|grinding|bumping)\b", concern)

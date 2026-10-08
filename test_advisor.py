@@ -96,8 +96,10 @@ class ConversationTests(unittest.TestCase):
         old = s["fields"]["summary"]
         reply = send(s, "it rattles", has_issue=True, details={
             "location": {"value": "Engine compartment", "evidence": "under the hood"}})
-        self.assertIn("could not validate", reply)
+        self.assertNotIn("could not validate", reply)
         self.assertEqual(s["fields"]["summary"], old)
+        self.assertNotIn("Engine compartment", reply)
+        self.assertTrue(any(entry["tool"] == "validate_observation" for entry in s["tool_log"]))
         self.assertFalse(s["records"])
 
     def test_explicit_speed_units_are_preserved(self):
@@ -155,6 +157,8 @@ class ConversationTests(unittest.TestCase):
         s = new_session()
         send(s, "tires need to be changed, bumping noise over 60", has_issue=True,
              departments=["maintenance"], summary="Customer reports a bumping noise.")
+        self.assertEqual(set(s["fields"]["departments"]), {"maintenance", "drivability"})
+        send(s, "the tires? jsut like i said", has_issue=True)
         self.assertEqual(set(s["fields"]["departments"]), {"maintenance", "drivability"})
         routine = new_session()
         send(routine, "tires need to be changed", has_issue=True,

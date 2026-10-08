@@ -168,9 +168,9 @@ def preserve_observations(session, text, question="", details=None):
                 or not item["evidence"].strip()):
             raise ValueError("Observation lacks customer evidence")
         if item["evidence"] not in text:
-            if normalize(item["value"]) == normalize(clean_details.get(topic, "")):
-                continue  # Unchanged context is not a new observation.
-            raise ValueError("Observation lacks customer evidence")
+            session["tool_log"].append({"tool": "validate_observation", "topic": topic,
+                                        "ignored": "No evidence in latest message"})
+            continue  # Keep verified facts; an optional model echo must not reject the turn.
         if (topic == "onset" and matches(r"\b(?:driving|drive|dirve|moving|speed)\b", item["evidence"])
                 and not matches(r"\b(?:first|started|began|noticed|today|yesterday|ago|last|since)\b", item["evidence"])):
             continue  # A driving condition does not establish when the problem began.
