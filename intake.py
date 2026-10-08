@@ -43,9 +43,33 @@ def requested_intent(text):
         return "ticket"
     if re.search(r"\b(?:review|prepare|show|create|want|need)\b.*\b(?:technician |intake )?summary\b", clean):
         return "summary"
-    if re.search(r"\b(?:book|schedule|reserve)\b.*\b(?:appointment|visit)\b|\b(?:soonest|earliest)\b", clean):
+    if re.search(r"\b(?:book|schedule|reserve)\b.*\b(?:appointment|visit)\b|\b(?:soonest|earliest|come in)\b", clean):
         return "appointment"
     return ""
+
+
+def moving_stall(text):
+    """A reported engine shutdown while moving merits a warning, not a diagnosis."""
+    clean = normalize(text)
+    return bool(re.search(r"\b(?:driving|moving)\b", clean) and
+                re.search(r"\b(?:stalled|stalling|shut off|died|dies|cut out)\b", clean) and
+                not re.search(r"\b(?:never|not|hasn t|hasnt)\b.{0,12}\b(?:stalled|died|shut off)\b", clean))
+
+
+def stalling_note(text):
+    """Preserve clearly reported events even if the model omits its note."""
+    if not moving_stall(text):
+        return ""
+    facts = ["Engine shut off while driving"]
+    if matches(r"\bstop light\b|\bstoplight\b", text):
+        facts.append("also shut off at a stoplight")
+    if matches(r"\b(?:able to get it to start again|restarted|started again)\b", text):
+        facts.append("restarted before shutting off again")
+    if matches(r"\blights\b.{0,20}\b(?:still on|stayed on|remained on)\b", text):
+        facts.append("lights remained on")
+    if matches(r"\btoday\b", text):
+        facts.append("reported onset today")
+    return "Customer reports: " + "; ".join(facts) + "."
 
 
 def requested_work(value, text):
@@ -80,6 +104,8 @@ def policy_topic(text, proposed):
 def preserve_observations(session, text, question=""):
     """Keep the latest answer per topic so revisions cannot silently erase observations."""
     observations = session.setdefault("observations", {})
+    if moving_stall(text):
+        observations["stalling sequence"] = stalling_note(text)
     key = normalize(question)
     if re.search(r"first notice|(?:did|does).*start|begin", key):
         key = "onset"
@@ -97,6 +123,11 @@ def preserve_observations(session, text, question=""):
             observations.pop(topic, None)
     note = session["fields"]["summary"]
     for key, answer in observations.items():
+        if key == "stalling sequence":
+            clues = {"driving": r"\bwhile (?:driving|moving)\b", "stoplight": r"\bstop ?light\b", "restarted": r"\b(?:restarted|started again|start again)\b",
+                     "lights remained on": r"\blights\b.{0,30}\b(?:on|illuminated)\b", "today": r"\btoday\b"}
+            if all(matches(pattern, note) for word, pattern in clues.items() if word in answer.lower()):
+                continue
         if key == "smoke" and matches(r"\bno (?:visible )?smoke\b", note):
             continue
         if normalize(answer) not in normalize(note):

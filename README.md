@@ -116,7 +116,7 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 54 no-key tests passed. The focused live samples completed
+Verification checkpoint: 66 no-key tests passed. The focused live samples completed
 6 booking turns, 5 triage/summary turns, and 6 ticket turns. Earlier failed runs
 remain in the development reports; they are not counted as passes. The model
 request uses [Groq strict structured outputs](https://console.groq.com/docs/structured-outputs)
@@ -157,6 +157,11 @@ Messages are sent to Groq. Use fictional customer details. The bot cannot quote
 exact prices, decide warranty coverage, handle insurance claims, look up recalls,
 or diagnose a vehicle. It refers these to the appropriate advisor, manufacturer,
 insurer, or technician. It cannot declare a vehicle safe to drive.
+
+Simple displayed weekday/time choices and summary-definition questions work locally.
+AI receives current state and issue history, not repeated chat previews. Rate-limit
+responses use Retry-After when available and avoid more AI calls during that
+session's cooldown. This reduces usage; it does not increase provider quotas.
 
 With 4 more weeks I would add a shared persistent database, calendar dates, a staff
 view, shop-reviewed policies, and broader testing of ambiguous language.

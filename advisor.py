@@ -2,15 +2,17 @@
 Calvin A. Prepetit - CSC-128 Capstone
 """
 import re
+import math
+import time
 from copy import deepcopy
 from uuid import uuid4
 from groq import APIConnectionError, APIError, AuthenticationError, RateLimitError
 from knowledge import DEPARTMENTS, policy_answer
 from model_client import MODEL, interpret
 from tools import (find_openings, normalize_day, normalize_time, save_record,
-                   validate_fields, slot_evidence)
+                   validate_fields, slot_evidence, visit_selection)
 from intake import (normalize, boundary, requested_intent, requested_work,
-                    routine_service, policy_topic, preserve_observations)
+                    routine_service, policy_topic, preserve_observations, moving_stall, stalling_note)
 
 GREETING = ("Welcome! I'm your Auto Shop Service Advisor.\n\n"
             "In your own words, describe what's going on with your vehicle. "
@@ -39,9 +41,23 @@ def new_session(records=None):
             "departments_confirmed": False, "revision": 0, "pending": None, "issue_messages": [], "last_question": "",
             "records": [] if records is None else records, "tool_log": [], "openings": [], "last_saved": None}
 
+def retry_seconds(error):
+    try:
+        return max(1, math.ceil(float(error.response.headers.get("retry-after", "60"))))
+    except (AttributeError, ValueError, OverflowError):
+        return 60
+
+
+def rate_limit_message(seconds):
+    return (f"The advisor reached its rate limit. Please try again in about {seconds} seconds. "
+            "Your intake details are still here; no request was saved. "
+            "You can still view openings or select a displayed time. "
+            "If the limit persists, the provider may have exhausted a daily allowance.")
+
+
 def friendly_error(error):
     if isinstance(error, RateLimitError):
-        return "The advisor reached its rate limit. Please wait a minute and try again. No request was saved."
+        return rate_limit_message(retry_seconds(error))
     if isinstance(error, (AuthenticationError, KeyError, FileNotFoundError)):
         return "The advisor connection is not configured correctly. Please try again later. No request was saved."
     if isinstance(error, (APIConnectionError, APIError)):
@@ -75,6 +91,8 @@ def uncertain_reply(text):
 def intake_question(session, proposed):
     """Keep common missing observations from being skipped by an empty model question."""
     details = normalize(session["fields"]["summary"] + " " + " ".join(session.get("issue_messages", [])))
+    if "restarted before shutting off again" in details and "lights remained on" in details:
+        return ""  # This customer's stalling sequence already supplies useful observations.
     onset = re.search(r"\b(?:today|yesterday|morning|mornin|evening|ago|since|started|first noticed|monday|mondya|tuesday|wednesday|thursday|friday|saturday|sunday)\b", details)
     if session["questions_asked"] == 0 and not onset:
         return "When did you first notice the problem?"
@@ -154,6 +172,12 @@ def advance(session):
         openings = openings_text(session)
         if {"day": f["day"], "time": f["time"]} not in session["openings"]:
             session["stage"] = "schedule"
+            if f["day"]:
+                choices = [o["time"] for o in session["openings"] if o["day"] == f["day"]]
+                if choices:
+                    return (("That selected time is unavailable. " if f["time"] else "") +
+                            f"For {f['day']}, the available demo times are: " + ", ".join(choices) +
+                            ". Which time would you like? These are repeating weekdays, not calendar dates.")
             return openings + "\n\n" + ("Your selected time is unavailable. " if f["day"] and f["time"] else "") + "Which day and time would you like?"
     return prepare_preview(session, kind)
 
@@ -196,9 +220,9 @@ def apply_updates(result, text, session):
                 if "tire" in work and re.search(r"\b(?:change|changed|replace|replaced|replacement)\b", work):
                     parsed[key] = "Customer-requested tire replacement"
         elif key == "day":
-            if re.search(r"\b(?:today|tomorrow|yesterday|(?:next|this|coming)\s+(?:week|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b", text, re.I):
-                raise ValueError("Please use a weekday without a relative calendar date.")
             days = re.findall(r"\b(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs?(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b", evidence, re.I)
+            if not days and re.search(r"\b(?:today|tomorrow|yesterday|next week)\b", text, re.I):
+                raise ValueError("Please name a weekday; this demo does not use calendar dates.")
             if len(set(d.lower() for d in days)) > 1:
                 raise ValueError("Ambiguous day")
             parsed[key] = normalize_day(days[0] if days else evidence)
@@ -208,11 +232,14 @@ def apply_updates(result, text, session):
             try:
                 parsed[key] = normalize_time(token)
             except ValueError:
-                if not re.fullmatch(r"\d{1,2}(?::[0-5]\d)?", evidence.strip()):
+                if not re.fullmatch(r"\d{1,4}(?::[0-5]\d)?", evidence.strip()):
                     raise
                 day = parsed.get("day", session["fields"]["day"])
+                shorthand = evidence.strip()
+                if re.fullmatch(r"\d{3,4}", shorthand):
+                    shorthand = shorthand[:-2] + ":" + shorthand[-2:]
                 matches = [o["time"] for o in session["openings"] if (not day or o["day"] == day)
-                           and (o["time"].split(":")[0] == evidence.strip() or o["time"].split()[0] == evidence.strip())]
+                           and (o["time"].split(":")[0] == shorthand or o["time"].split()[0] == shorthand)]
                 if len(set(matches)) != 1:
                     raise ValueError("Ambiguous time")
                 parsed[key] = matches[0]
@@ -227,11 +254,11 @@ def apply_updates(result, text, session):
         elif first_concern and result["has_issue"]:
             work = session["fields"]["expected_work"]
             session["fields"]["summary"] = (f"Customer requests {work}." if work
-                                             else "Customer reports: " + text)
+                                             else stalling_note(text) or "Customer reports: " + text)
         departments = list(dict.fromkeys(result["departments"]))
         if departments:
             session["fields"]["departments"] = departments
-            session["reasons"] = result["reasons"]
+            session["reasons"] = {d: DEPARTMENTS[d] for d in departments}
         if re.search(r"\b(?:not|isn t|isnt)\s+(?:the )?(?:ac|a c|air conditioning)\b", normalize(text)):
             session["reported_vent_source"] = False
         if re.search(r"\b(?:ac|a c|air conditioning)\s+vents?\b", normalize(text)) and not re.search(r"\b(?:not|isn t|isnt)\s+(?:the )?(?:ac|a c|air conditioning)\b", normalize(text)):
@@ -243,7 +270,7 @@ def apply_updates(result, text, session):
             session["departments_confirmed"] = False
     elif result["action"] == "revise" and result["departments"] and result["departments"] != session["fields"]["departments"]:
         session["fields"]["departments"] = result["departments"]
-        session["reasons"] = result["reasons"]
+        session["reasons"] = {d: DEPARTMENTS[d] for d in result["departments"]}
         session["departments_confirmed"] = False
     if session.get("reported_vent_source") and "vent" not in session["fields"]["summary"].lower():
         session["fields"]["summary"] += " Customer reports a possible AC-vent source; location is uncertain."
@@ -319,6 +346,26 @@ def handle(text, session, client_factory, control=None):
         return advance(session)
     if control == "openings":
         return openings_text(session)
+    if re.fullmatch(r"(?:what(?: s|s| is)|explain) (?:a |the )?technician summary", clean):
+        return ("A technician summary is a clear note of what you reported: the symptoms, "
+                "when they happen, and other details a technician should review. "
+                "It is not a diagnosis, ticket, or appointment. Your current intake is unchanged. "
+                "Say 'show my technician summary' if you would like to review yours.")
+    if not session["last_saved"] and session["fields"]["summary"] and not answering_issue:
+        if clean in {"when can i come in", "when can i come in please", "show available times"}:
+            invalidate(session)
+            session["intent"] = "appointment"
+            return advance(session)
+        selection = visit_selection(text, find_openings(session["records"]))
+        if selection:
+            invalidate(session)
+            session["intent"] = "appointment"
+            session["fields"]["day"], session["fields"]["time"] = selection
+            session["tool_log"].append({"tool": "visit_selection", "day": selection[0], "time": selection[1]})
+            reply = advance(session)
+            if selection[1] == "" and re.search(r"\d", text):
+                return "I cannot match that time to an available opening. " + reply
+            return reply
     if clean in {"what should i bring", "what should i bring to drop off"}:
         return policy_answer("bring", text)
     if re.fullmatch(r"(?:is this|is it|are we) (?:saved|booked|confirmed)(?: already)?", clean):
@@ -326,7 +373,16 @@ def handle(text, session, client_factory, control=None):
                 else "This request is not saved. " + ("Your displayed preview is still waiting for confirmation." if session["pending"] else "Complete and review the details first."))
     if session["pending"] and consent_conflict(text) and "?" not in text:
         invalidate(session)
+    remaining = math.ceil(session.get("retry_until", 0) - time.time())
+    if remaining > 0:
+        return rate_limit_message(remaining)
     result = interpret(text, session, client_factory())
+    if moving_stall(text):
+        result["has_issue"] = True
+        result["summary"] = result["summary"] or stalling_note(text)
+        result["departments"] = list(dict.fromkeys(result["departments"] + ["drivability"]))
+        if result["refusal"] == "unsafe":
+            result["refusal"] = ""  # Warning is added below; documenting does not authorize driving.
     # Task choice and explicit work survive a model's overly broad triage label.
     task = requested_intent(text)
     if task:
@@ -348,7 +404,12 @@ def handle(text, session, client_factory, control=None):
     # Symptom history is not a requested appointment, even if it contains a weekday/time.
     explicit_visit = bool(re.search(r"\b(?:book|schedule|appointment|visit|bring|drop off|come in)\b", clean))
     past_event = bool(re.search(r"\b(?:tried|started|noticed|heard|happened|this morning|yesterday)\b", clean))
-    identity_only = (not result["has_issue"] and any(result["updates"].get(key) for key in ("customer_name", "vehicle")))
+    identity_only = (any(result["updates"].get(key) for key in ("customer_name", "vehicle")) and
+                     (not result["has_issue"] or (re.search(r"\b(?:my name|i drive|my vehicle is)\b", clean) and
+                      not re.search(r"\b(?:issue|problem|noise|rattle|leak|stall|stalled|died|click|clicking|brakes|shaking|wont|won t|isnt|isn t|need|want)\b", clean))))
+    if identity_only:
+        result["has_issue"] = False
+        result["summary"] = result["clarification"] = ""
     symptom_answer = answering_issue and not explicit_visit and not identity_only
     if symptom_answer or (past_event and result["has_issue"] and not explicit_visit):
         result["updates"].pop("day", None)
@@ -394,7 +455,7 @@ def handle(text, session, client_factory, control=None):
     except ValueError as error:
         invalidate(session)
         session["tool_log"].append({"tool": "validate_updates", "error": str(error), "updates": result["updates"]})
-        return "I could not validate those details. Please give the correction again, using a weekday and a time such as 9am when scheduling. No request was saved."
+        return "I could not validate those details. " + str(error) + " No request was saved."
     if result["intent"] not in {"continue", "information"}:
         candidate["intent"] = result["intent"]
     if routing_ok:
@@ -432,6 +493,12 @@ def process_turn(text, session, client_factory, control=None):
         reply = handle(text, session, client_factory, control)
     except Exception as error:
         invalidate(session)
+        if isinstance(error, RateLimitError):
+            session["retry_until"] = time.time() + retry_seconds(error)
         reply = friendly_error(error)
+    if moving_stall(text) and not control:
+        reply = ("An engine shutting off while driving is a safety concern. I cannot tell you "
+                 "it is safe to drive; contact a human service advisor or towing provider "
+                 "about getting the vehicle inspected.\n\n" + reply)
     session["messages"].append({"role": "assistant", "content": reply})
     return reply

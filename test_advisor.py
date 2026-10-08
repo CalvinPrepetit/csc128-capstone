@@ -42,6 +42,136 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_definition_question_preserves_intake_without_api(self):
+        s, factory = filled("summary"), Mock(side_effect=AssertionError("No API needed"))
+        pending = deepcopy(s["pending"])
+        reply = process_turn("Whats a technician summary?", s, factory)
+        self.assertIn("clear note", reply)
+        self.assertEqual(s["pending"], pending)
+        self.assertFalse(s["records"])
+        factory.assert_not_called()
+
+    def test_explicit_weekday_with_relative_word_changes_task_not_saves(self):
+        s = filled("summary")
+        reply = send(s, "yea i guess thats fine when can i come in ? does tomorrow thursday work",
+                     intent="summary", action="question", updates={
+                         "day": {"value": "Thursday", "evidence": "thursday"}})
+        self.assertEqual(s["intent"], "appointment")
+        self.assertEqual(s["fields"]["day"], "Thursday")
+        self.assertIn("1:30 PM", reply)
+        self.assertFalse(s["records"])
+        self.assertIsNone(s["pending"])
+
+    def test_user_scheduling_sequence_needs_no_api_or_duplicate_save(self):
+        s, factory = filled("summary"), Mock(side_effect=AssertionError("No API needed"))
+        reply = process_turn("can i come in thursday at 10", s, factory)
+        self.assertIn("cannot match", reply)
+        self.assertIn("1:30 PM", reply)
+        self.assertEqual(s["fields"]["time"], "")
+        reply = process_turn("Thursday is fine", s, factory)
+        self.assertIn("For Thursday", reply)
+        self.assertIsNone(s["pending"])
+        process_turn("thursday at 130 then", s, factory)
+        self.assertEqual(s["pending"]["fields"]["time"], "1:30 PM")
+        self.assertFalse(s["records"])
+        process_turn("yes", s, factory)
+        process_turn("yes", s, factory)
+        self.assertEqual(len(s["records"]), 1)
+        factory.assert_not_called()
+
+    def test_ambiguous_or_mixed_time_is_not_locally_confirmed(self):
+        s = filled()
+        send(s, "Thursday at 130 but add a brake issue", has_issue=True,
+             summary="Oil change and brake concern.", departments=["maintenance", "drivability"])
+        self.assertFalse(s["departments_confirmed"])
+        self.assertFalse(s["records"])
+        self.assertIsNone(s["pending"])
+
+    def test_relative_only_day_is_not_invented(self):
+        s = filled("summary")
+        reply = send(s, "Can I come in tomorrow?", intent="appointment", updates={
+            "day": {"value": "Thursday", "evidence": "tomorrow"}})
+        self.assertIn("name a weekday", reply)
+        self.assertFalse(s["records"])
+
+    def test_compact_time_from_ai_matches_displayed_opening(self):
+        s = filled()
+        s["openings"] = find_openings([])
+        send(s, "Yes but Thursday at 130 instead", action="revise", updates={
+            "day": {"value": "Thursday", "evidence": "Thursday"},
+            "time": {"value": "1:30 PM", "evidence": "130"}})
+        self.assertEqual(s["pending"]["fields"]["time"], "1:30 PM")
+        self.assertFalse(s["records"])
+
+    def test_rate_limit_cooldown_keeps_intake_and_local_choices_work(self):
+        response = httpx.Response(429, headers={"retry-after": "125"},
+                                  request=httpx.Request("POST", "https://example.com"))
+        client = client_for(output())
+        client.chat.completions.create.side_effect = RateLimitError("private", response=response, body=None)
+        s = filled("summary")
+        reply = process_turn("Please help me decide what to do", s, lambda: client)
+        self.assertIn("125 seconds", reply)
+        self.assertIn("daily allowance", reply)
+        self.assertNotIn("private", reply)
+        self.assertEqual(s["fields"]["customer_name"], "Calvin")
+        factory = Mock(side_effect=AssertionError("Cooldown must not call provider"))
+        self.assertIn("rate limit", process_turn("already?", s, factory))
+        process_turn("Thursday at 130", s, factory)
+        self.assertEqual(s["stage"], "preview")
+        self.assertFalse(s["records"])
+        factory.assert_not_called()
+
+    def test_stalling_history_is_preserved_and_warns_without_diagnosis(self):
+        s = new_session()
+        text = ("my car isnt starting i was driving today when at a stop light it jsut shut off. "
+                "all of the lights were still on. luckily i was able to get it to start again "
+                "but hten moments later it died on me . same thing but this time i was actually driving when it happened")
+        reply = send(s, text, has_issue=True, summary="Customer reports engine stalled; lights stayed on.",
+                     departments=["drivability"])
+        self.assertIn("safety concern", reply)
+        self.assertIn("towing", reply)
+        self.assertIn("stoplight", s["fields"]["summary"])
+        self.assertIn("restarted", s["fields"]["summary"])
+        send(s, "No warning lights", has_issue=True, summary="Engine stalled.", departments=["drivability"])
+        self.assertIn("stoplight", s["fields"]["summary"])
+        self.assertFalse(s["records"])
+
+    def test_routing_reasons_do_not_present_guessed_causes(self):
+        s = new_session()
+        reply = send(s, "The engine stalled today, lights stayed on", has_issue=True,
+                     summary="Engine stalled, lights stayed on.", departments=["electrical"],
+                     reasons={"electrical": "Battery/charging system issue"})
+        self.assertNotIn("Battery/charging system issue", reply)
+        self.assertNotIn("Battery/charging system issue", s["reasons"]["electrical"])
+
+    def test_moving_stall_can_be_documented_when_model_only_warns(self):
+        s = new_session()
+        reply = send(s, "Engine died while driving today", refusal="unsafe", action="question")
+        self.assertIn("safety concern", reply)
+        self.assertIn("drivability", s["fields"]["departments"])
+        self.assertIn("shut off while driving", s["fields"]["summary"])
+        self.assertFalse(s["records"])
+
+    def test_compact_context_does_not_resend_chat_previews(self):
+        s, client = filled(), client_for(output(action="question"))
+        s["messages"].append({"role": "assistant", "content": "UNNECESSARY_PREVIEW_COPY"})
+        process_turn("Could you clarify the work description?", s, lambda: client)
+        context = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+        self.assertNotIn("history", context)
+        self.assertNotIn("UNNECESSARY_PREVIEW_COPY", json.dumps(context))
+        self.assertEqual(context["fields"]["vehicle"], "2020 Chevy Suburban")
+
+    def test_identity_reply_is_not_added_as_a_symptom(self):
+        s = new_session()
+        s["stage"], s["last_question"] = "clarify", "What do you notice?"
+        s["fields"].update(summary="Engine stalled.", departments=["drivability"])
+        send(s, "well my name is jeff and i drive a 2015 honda crv", has_issue=True,
+             summary="Engine stalled. Jeff drives a Honda.", updates={
+                 "customer_name": {"value": "jeff", "evidence": "jeff"},
+                 "vehicle": {"value": "2015 honda crv", "evidence": "2015 honda crv"}})
+        self.assertEqual(s["fields"]["summary"], "Engine stalled.")
+        self.assertNotIn("observations", s)
+
     def test_formatted_time_evidence_matches_only_the_customer_time(self):
         s = filled()
         send(s, "Yes but Thursday at 1:30pm instead.", action="revise", updates={
@@ -51,7 +181,7 @@ class ConversationTests(unittest.TestCase):
         self.assertFalse(s["records"])
 
     def test_reformatted_evidence_cannot_invent_or_choose_a_time(self):
-        for text, value in (("Thursday at 1:30pm", "2:00 PM"), ("Thursday at 1:30pm or 2pm", "1:30 PM")):
+        for text, value in (("Yes but Thursday at 1:30pm", "2:00 PM"), ("Thursday at 1:30pm or 2pm", "1:30 PM")):
             s = filled()
             send(s, text, action="revise", updates={"time": {"value": value, "evidence": value}})
             self.assertIsNone(s["pending"])

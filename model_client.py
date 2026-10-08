@@ -47,11 +47,15 @@ Never shorten or paraphrase evidence; it must be a contiguous exact substring.
 For names/vehicles/work use exact wording as value. Evidence for day/time must be
 the exact weekday/time token, not a sentence. A bare 'at 10' uses evidence '10';
 Python resolves it only against a unique displayed opening. Do not choose a time.
+An explicit weekday remains usable in 'tomorrow Thursday'; never infer a calendar date.
+For 'Thursday at 130', preserve exact evidence '130'; Python matches displayed times.
 day/time slots are ONLY requested visit times. 'This morning', 'Monday at 6am I
 tried starting it', and answers to when a symptom started belong in the technician
 summary, NEVER appointment slots. Relative times are valid symptom history.
 departments: array of approved names covering ALL current concerns.
 reasons: object with one short customer-friendly reason per proposed department.
+Reasons describe reported observations or department scope, not guessed causes.
+'Lights stayed on' does not establish a battery or charging fault.
 has_issue: boolean, whether latest text adds or corrects issue/symptom details
 OR requests specific service (oil change and tire replacement both count as true).
 Specific service always needs a note, e.g. 'Customer requests tire replacement.'
@@ -60,6 +64,7 @@ sounds, warning lights, and uncertainty from issue_messages and latest text.
 Include dates/times of symptom events. EXCLUDE customer name, vehicle and requested
 appointment times: Python displays those separately. Never drop earlier observations.
 On corrections update the note to reflect current facts, preserving uncertainty.
+Preserve event sequence: stalled at stoplight, restarted, then stalled while moving.
 Use only customer details; no diagnosis,
 no saved/confirmed/booked claims, no invented symptoms or requested work.
 clarification: ONE simple nontechnical question or empty. No compound questions.
@@ -87,6 +92,8 @@ the source is uncertain. Retain drivability if running conditions also suggest i
 Preserve 'possibly from AC vents' rather than declaring an AC fault.
 intent triage = routing help only; appointment = select/reserve a visit; ticket =
 service request (may be unscheduled); summary = review an intake note without saving.
+Definition questions such as 'What is a technician summary?' are information,
+not consent to prepare/confirm one. A question about coming in switches to appointment.
 Use continue for missing details or confirmation, preserving the existing intent.
 Asking when the shop can take a look, the soonest opening, or when they can bring
 the car in is appointment intent, even when combined with a symptom description.
@@ -118,7 +125,7 @@ def interpret(text, session, client):
                "observations": session.get("observations", {}),
                "pending": ({"kind": session["pending"]["kind"], "fields": session["pending"]["fields"]} if session["pending"] else None),
                "openings": session.get("openings", []),
-               "history": session["messages"][-8:], "department_guide": DEPARTMENTS}
+               "department_guide": DEPARTMENTS}
     response = client.chat.completions.create(
         model=MODEL, temperature=0, reasoning_effort="low", max_completion_tokens=1500,
         response_format={"type": "json_schema", "json_schema": {"name": "intake", "strict": True, "schema": SCHEMA}},

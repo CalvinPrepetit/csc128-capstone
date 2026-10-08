@@ -64,6 +64,32 @@ def find_openings(records):
     reserved = {(r.get("day"), r.get("time")) for r in records}
     return [{"day": d, "time": t} for d, t in OPENINGS if (d, t) not in reserved]
 
+
+def visit_selection(text, openings):
+    """Resolve simple displayed choices locally; mixed requests remain with AI."""
+    match = re.fullmatch(
+        r"\s*(?:(?:can i come in|book|schedule|choose)\s+)?"
+        r"(monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+        r"(?:\s+(?:at\s+)?(\d{1,4}(?::[0-5]\d)?\s*(?:[ap]m?)?))?"
+        r"(?:\s+(?:then|please|is fine|works(?: fine)?|works for me))?[.!?]*\s*",
+        text, re.I)
+    if not match:
+        return None
+    day, token = normalize_day(match[1]), match[2]
+    if not token:
+        return day, ""
+    token = token.strip().lower()
+    if re.fullmatch(r"\d{3,4}", token):
+        token = token[:-2] + ":" + token[-2:]
+    if re.fullmatch(r"\d{1,2}(?::[0-5]\d)?", token):
+        choices = [o["time"] for o in openings if o["day"] == day and
+                   (o["time"].split()[0] == token or
+                    (":" not in token and o["time"].split(":")[0] == token))]
+        if len(set(choices)) != 1:
+            return day, ""  # Do not guess AM/PM or authorize a different time.
+        return day, choices[0]
+    return day, normalize_time(token)
+
 def validate_fields(fields, departments_confirmed, kind, records):
     if kind not in {"appointment", "ticket"}:
         raise ValueError("Unsupported record type.")
