@@ -171,11 +171,16 @@ class ConversationTests(unittest.TestCase):
             "concern": {"value": "Customer reports a bumping noise", "evidence": "bumping noise"},
             "conditions": {"value": "Noise occurs above a reported speed of 60", "evidence": "over 60"}})
         send(s, "the tires? jsut like i said. It also happens when movin really slow", has_issue=True)
+        send(s, "it happens when movin really slow", has_issue=True, details={
+            "conditions": {"value": "Noise occurs at low speed", "evidence": "movin really slow"}})
         note = s["fields"]["summary"]
         self.assertIn("low speed", note)
         self.assertIn("source is uncertain", note)
         self.assertNotIn("jsut", note)
         self.assertIn("60", note)
+        send(s, "Actually only at low speed, not over 60", has_issue=True, details={
+            "conditions": {"value": "Noise occurs only at low speed", "evidence": "only at low speed"}})
+        self.assertNotIn("60", s["fields"]["summary"])
 
     def test_no_start_note_is_readable_and_keeps_distinct_observations(self):
         s = new_session()

@@ -1,6 +1,13 @@
 """Small language safeguards; the model still interprets the open-ended concern."""
 import re
 
+NOTE_FILLER = {"customer", "reports", "reported", "vehicle", "occurs", "when",
+               "the", "a", "an", "is", "at", "of", "first", "noticed"}
+
+
+def detail_words(text):
+    return set(normalize(text).split()) - NOTE_FILLER
+
 
 def normalize(text):
     return " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
@@ -174,7 +181,15 @@ def preserve_observations(session, text, question="", details=None):
         if (topic == "onset" and matches(r"\b(?:driving|drive|dirve|moving|speed)\b", item["evidence"])
                 and not matches(r"\b(?:first|started|began|noticed|today|yesterday|ago|last|since)\b", item["evidence"])):
             continue  # A driving condition does not establish when the problem began.
-        clean_details[topic] = item["value"].strip().rstrip(".") + "."
+        answer = item["value"].strip().rstrip(".") + "."
+        previous = clean_details.get(topic, "")
+        correction = matches(r"\b(?:actually|correction|instead|i meant|rather than)\b", text)
+        if previous and topic in {"concern", "conditions", "additional"} and not correction:
+            if detail_words(answer) <= detail_words(previous):
+                continue
+            if not detail_words(previous) <= detail_words(answer):
+                answer = previous + " " + answer
+        clean_details[topic] = answer
     onset = onset_observation(text)
     if onset:
         clean_details["onset"] = onset + "."
@@ -185,10 +200,8 @@ def preserve_observations(session, text, question="", details=None):
     if clean_details.get("concern"):
         # Join AI-written observations once; short follow-ups cannot erase earlier topics.
         note = ""
-        filler = {"customer", "reports", "reported", "vehicle", "occurs", "when",
-                  "the", "a", "an", "is", "at", "of", "first", "noticed"}
         for answer in clean_details.values():
-            words = set(normalize(answer).split()) - filler
+            words = detail_words(answer)
             if not words <= set(normalize(note).split()):
                 note += (" " if note else "") + answer
         source = " ".join(session.get("issue_messages", []) + [text])
