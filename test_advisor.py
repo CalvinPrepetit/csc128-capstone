@@ -161,6 +161,18 @@ class ConversationTests(unittest.TestCase):
              departments=["maintenance"], summary="Customer requests tire replacement.")
         self.assertEqual(routine["fields"]["departments"], ["maintenance"])
 
+    def test_combined_source_and_low_speed_answer_keeps_both_details(self):
+        s = new_session()
+        send(s, "bumping noise over 60", has_issue=True, departments=["drivability"], details={
+            "concern": {"value": "Customer reports a bumping noise", "evidence": "bumping noise"},
+            "conditions": {"value": "Noise occurs above a reported speed of 60", "evidence": "over 60"}})
+        send(s, "the tires? jsut like i said. It also happens when movin really slow", has_issue=True)
+        note = s["fields"]["summary"]
+        self.assertIn("low speed", note)
+        self.assertIn("source is uncertain", note)
+        self.assertNotIn("jsut", note)
+        self.assertIn("60", note)
+
     def test_no_start_note_is_readable_and_keeps_distinct_observations(self):
         s = new_session()
         send(s, "My car jsut wont start it kind of cranks and all the lights are on but it jsut wont start. i was able to get it goin a little bit but it wont stay at idle. This started today.",

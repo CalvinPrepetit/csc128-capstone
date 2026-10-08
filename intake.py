@@ -178,6 +178,10 @@ def preserve_observations(session, text, question="", details=None):
     onset = onset_observation(text)
     if onset:
         clean_details["onset"] = onset + "."
+    if (clean_details.get("conditions") and matches(r"\b(?:slow|slowly|low speed)\b", text)
+            and not matches(r"\b(?:not|never|doesn t|doesnt)\b.{0,20}\b(?:slow|slowly|low speed)\b", text)
+            and not matches(r"\b(?:slow|slowly|low speed)\b", clean_details["conditions"])):
+        clean_details["conditions"] += " Customer also reports the concern at low speed."
     if clean_details.get("concern"):
         # Join AI-written observations once; short follow-ups cannot erase earlier topics.
         note = ""
