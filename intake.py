@@ -50,7 +50,8 @@ def requested_intent(text):
         return "ticket"
     if re.search(r"\b(?:review|prepare|show|create|want|need)\b.*\b(?:technician |intake )?summary\b", clean):
         return "summary"
-    if re.search(r"\b(?:book|schedule|reserve)\b.*\b(?:appointment|visit)\b|\b(?:soonest|earliest|come in)\b", clean):
+    if re.search(r"\b(?:book|schedule|reserve)\b.*\b(?:appointment|visit|me)\b|\b(?:soonest|earliest|come in)\b|"
+                 r"\bwhen(?:s| can| could| would).*\b(?:look|bring|take|appointment|available)\b", clean):
         return "appointment"
     return ""
 

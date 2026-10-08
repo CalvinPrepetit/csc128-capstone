@@ -81,7 +81,7 @@ def clear_agreement(text):
     return bool(re.fullmatch(
         r"(?:(?:great|okay|ok|perfect|thanks) )?"
         r"(?:yes|y|yep|yup|yeah|yea|confirm|correct|looks good|works for me|that works|go ahead(?: and (?:save|book) it)?|yes that s correct|yes thats correct)"
-        r"(?: (?:please|thanks|thank you|thankyou|that s correct|thats correct))*", normalize(text)))
+        r"(?: (?:please|thanks|thank you|thankyou|that s correct|thats correct|that looks (?:fine|good)|that works|looks fine))*", normalize(text)))
 
 def uncertain_reply(text):
     return bool(re.fullmatch(
@@ -165,7 +165,9 @@ def advance(session):
                 "\n\nDoes this note describe the concern correctly? Reply yes to use this intake routing, or tell me what to change.")
     if session["intent"] == "triage":
         session["stage"] = "routed"
-        return "Confirmed departments: " + ", ".join(f["departments"]) + ". I can now show available appointments, create an unscheduled service ticket, or review a technician summary."
+        return ("Confirmed departments: " + ", ".join(f["departments"]) +
+                ". Would you like to schedule an appointment, prepare an unscheduled service ticket, "
+                "or review the technician summary? Nothing has been booked or saved yet.")
     if session["intent"] == "summary":
         return prepare_preview(session, "summary")
     kind = session["intent"]
@@ -183,7 +185,8 @@ def advance(session):
     missing = [label for key, label in (("customer_name", "name"), ("vehicle", "vehicle year, make, and model (or the details you know)")) if not f[key]]
     if missing:
         session["stage"] = "collect"
-        return "Please provide your " + " and ".join(missing) + ". I will keep your selected time and issue details."
+        retained = "selected time and issue details" if f["day"] and f["time"] else "service details"
+        return "Please provide your " + " and ".join(missing) + ". I will keep your " + retained + "."
     return prepare_preview(session, kind)
 
 def apply_updates(result, text, session):
@@ -308,6 +311,8 @@ def confirm(session):
         return f"Saved demo {record['kind']} {record['id']}. Your reviewed details and original messages are included. This is stored only in this browser session. To change a saved request, contact a human service advisor."
     if session["last_saved"]:
         return f"Request {session['last_saved']} is already saved. No duplicate was created."
+    if session["stage"] == "routed":
+        return advance(session)
     return "There is no preview waiting for confirmation. Tell me what you would like help with."
 
 def handle(text, session, client_factory, control=None):
@@ -441,10 +446,12 @@ def handle(text, session, client_factory, control=None):
         result["has_issue"] = True
         result["action"] = "provide"
         result["intent"] = "continue"
-    asks_for_visit = bool(re.search(r"\b(?:soonest|earliest)\b|\bwhen(?:s| can| could| would).*\b(?:look|bring|take|appointment|available)\b", clean))
-    if asks_for_visit and not result["refusal"]:
-        result["intent"] = "appointment"
-    elif session["intent"] == "appointment" and result["intent"] == "triage" and result["has_issue"]:
+    # Describing work is not choosing a ticket. Keep model-led choices only when
+    # the customer requests a task or supplies visit details, not just symptoms.
+    if (session["intent"] == "triage" and result["intent"] in {"appointment", "ticket", "summary"}
+            and not task and not explicit_visit
+            and not re.search(r"\b(?:ticket|summary)\b", clean)
+            and not any(result["updates"].get(key) for key in ("day", "time"))):
         result["intent"] = "continue"
     if result["action"] == "cancel":
         return handle("cancel", session, client_factory)

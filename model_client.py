@@ -127,6 +127,9 @@ service request (may be unscheduled); summary = review an intake note without sa
 Definition questions such as 'What is a technician summary?' are information,
 not consent to prepare/confirm one. A question about coming in switches to appointment.
 Use continue for missing details or confirmation, preserving the existing intent.
+A service description such as 'my car needs an oil change' is triage, not permission
+to create a ticket or appointment. Choose those tasks only when requested; after
+routing confirmation, Python asks the customer which next step they want.
 Asking when the shop can take a look, the soonest opening, or when they can bring
 the car in is appointment intent, even when combined with a symptom description.
 Keep appointment, ticket, or summary intent on later symptom replies; do not switch to triage unless

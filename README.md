@@ -116,7 +116,11 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 81 no-key tests passed. Intake details now use evidence-backed,
+Verification checkpoint: 85 no-key tests passed. Describing service work does not
+automatically choose an unscheduled ticket. After routing, the customer chooses
+an appointment, ticket, or summary. Common clear preview agreement such as
+'yes that looks fine' confirms locally; corrections still require fresh review.
+Intake details now use evidence-backed,
 AI-written observations retained by topic, avoiding repeated questions and raw-answer
 appendices. Explicit tire replacement stays requested work, not an authorized repair;
 speed units are not invented. The focused live samples completed

@@ -42,6 +42,54 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_service_description_does_not_choose_a_task(self):
+        for intent in ("ticket", "appointment", "summary"):
+            with self.subTest(intent=intent):
+                s = new_session()
+                send(s, "Hi my car needs an oil change", intent=intent, has_issue=True,
+                     summary="Customer requests an oil change.", departments=["maintenance"])
+                reply = process_turn("Yes", s, Mock())
+                self.assertIn("Would you like to schedule an appointment", reply)
+                self.assertEqual(s["intent"], "triage")
+                self.assertEqual(s["stage"], "routed")
+                self.assertIsNone(s["pending"])
+                self.assertIn("Would you like", process_turn("yes", s, Mock()))
+                self.assertEqual(s["records"], [])
+
+    def test_next_step_appointment_keeps_concern_and_checks_times_first(self):
+        s = new_session()
+        send(s, "I need an oil change", intent="ticket", has_issue=True,
+             summary="Customer requests an oil change.", departments=["maintenance"])
+        process_turn("yes", s, Mock())
+        reply = process_turn("Schedule appointment", s, Mock(), control="appointment")
+        self.assertIn("Available demo intake times", reply)
+        self.assertNotIn("Please provide your", reply)
+        process_turn("Friday at 9am", s, Mock())
+        reply = send(s, "Jeff 1999 bmw 550", updates={
+            "customer_name": {"value": "Jeff", "evidence": "Jeff"},
+            "vehicle": {"value": "1999 bmw 550", "evidence": "1999 bmw 550"}})
+        self.assertIn("appointment request", reply)
+        self.assertIn("oil change", reply)
+        self.assertIn("Saved demo appointment", process_turn("yes that looks fine", s, Mock()))
+        process_turn("yes", s, Mock())
+        self.assertEqual(len(s["records"]), 1)
+
+    def test_unscheduled_ticket_does_not_claim_a_selected_time(self):
+        s = new_session()
+        send(s, "Create a service ticket for an oil change", intent="ticket", has_issue=True,
+             summary="Customer requests an oil change.", departments=["maintenance"])
+        reply = process_turn("yes", s, Mock())
+        self.assertIn("Please provide your", reply)
+        self.assertNotIn("selected time", reply)
+        self.assertEqual(s["intent"], "ticket")
+
+    def test_friendly_confirmation_does_not_accept_conditions(self):
+        s = filled()
+        old_confirmation = s["pending"]["confirmation_id"]
+        send(s, "yes that looks fine but change it", action="question")
+        self.assertEqual(s["records"], [])
+        self.assertNotEqual(s["pending"]["confirmation_id"], old_confirmation)
+
     def test_tire_intake_uses_volunteered_details_and_retains_work(self):
         s = new_session()
         text = "my cars tires need to be changed i keep hearin a bumping noise when i dirve over 60"
