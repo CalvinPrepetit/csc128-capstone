@@ -13,7 +13,7 @@ from tools import (find_openings, normalize_day, normalize_time, save_record,
                    validate_fields, slot_evidence, visit_selection)
 from intake import (normalize, boundary, requested_intent, requested_work,
                     routine_service, policy_topic, preserve_observations, moving_stall, stalling_note,
-                    readable_fallback)
+                    readable_fallback, tire_request, suspected_location)
 
 GREETING = ("Welcome! I'm your Auto Shop Service Advisor.\n\n"
             "In your own words, describe what's going on with your vehicle. "
@@ -94,7 +94,10 @@ def intake_question(session, proposed):
     details = normalize(session["fields"]["summary"] + " " + " ".join(session.get("issue_messages", [])))
     if "restarted before shutting off again" in details and "lights remained on" in details:
         return ""  # This customer's stalling sequence already supplies useful observations.
-    onset = re.search(r"\b(?:today|yesterday|morning|mornin|evening|ago|since|started|first noticed|monday|mondya|tuesday|wednesday|thursday|friday|saturday|sunday)\b", details)
+    known = session.get("intake_details", {})
+    onset = known.get("onset") or re.search(r"\b(?:last week|last month|today|yesterday|morning|mornin|evening|ago|since|started|first noticed|monday|mondya|tuesday|wednesday|thursday|friday|saturday|sunday)\b", details)
+    conditions = known.get("conditions") or re.search(r"\b(?:idle|idling|braking|accelerating|turning|driving|dirve|drive|speed|stopped|moving|movin|parked|sitting|starting|stop light)\b|\b(?:over|above|under|below) \d+\b", details)
+    location = known.get("location") or re.search(r"\b(?:front|back|rear|underneath|under|inside|outside|wheels?|tires?|tyres?|engine|vents?)\b", details)
     if session["questions_asked"] == 0 and not onset:
         return "When did you first notice the problem?"
     no_start = re.search(r"(?:won t|wont|will not|not|doesn t|doesnt).{0,18}(?:start|turn on|tur non)|no start", details)
@@ -104,14 +107,15 @@ def intake_question(session, proposed):
         if not re.search(r"\b(?:lights?|dashboard|dash)\b", details):
             return "Do the dashboard lights turn on when you turn the key?"
     elif re.search(r"\b(?:rattle|rattles|rattling|rattlin|noise|squeak|squeaking|grinding)\b", details):
-        if not re.search(r"\b(?:idle|idling|braking|accelerating|turning|driving|speed|stopped|moving|parked|sitting|starting|stop light)\b", details):
+        if not conditions:
             return "When do you hear the noise?"
-        if not re.search(r"\b(?:front|back|rear|underneath|under|inside|outside|wheel|engine|vents?)\b", details):
+        if not location:
             return "Where does the noise seem to come from?"
     elif session["questions_asked"] == 1 and not proposed:
         return "What do you notice when the problem happens?"
-    if re.search(r"when.*(?:hear|noise|sound|occur|hiss)", proposed, re.I) and re.search(
-            r"\b(?:idle|idling|braking|accelerating|turning|driving|parked|starting|stop light)\b", details):
+    if ((conditions and re.search(r"when.*(?:hear|noise|sound|occur|hiss)", proposed, re.I))
+            or (location and re.search(r"where|which.*(?:area|part)", proposed, re.I))
+            or (onset and re.search(r"first notice|(?:did|does).*start|begin", proposed, re.I))):
         return ""  # Do not ask for conditions the customer already supplied.
     return proposed
 
@@ -378,6 +382,15 @@ def handle(text, session, client_factory, control=None):
     if remaining > 0:
         return rate_limit_message(remaining)
     result = interpret(text, session, client_factory())
+    replacement = tire_request(text)
+    proposed_work = result["updates"].get("expected_work") or {}
+    if replacement and (not proposed_work or str(proposed_work.get("value", "")).casefold()
+                        not in str(proposed_work.get("evidence", "")).casefold()):
+        result["updates"]["expected_work"] = {"value": replacement, "evidence": replacement}
+    location = suspected_location(text)
+    if location and session["fields"]["summary"] and not result["details"].get("location"):
+        result["details"]["location"] = location
+        result["has_issue"] = True
     if moving_stall(text):
         result["has_issue"] = True
         result["summary"] = result["summary"] or stalling_note(text)
@@ -456,7 +469,7 @@ def handle(text, session, client_factory, control=None):
     try:
         apply_updates(result, text, candidate)
         if result["has_issue"]:
-            preserve_observations(candidate, text, session["last_question"] if symptom_answer else "")
+            preserve_observations(candidate, text, session["last_question"] if symptom_answer else "", result["details"])
     except ValueError as error:
         invalidate(session)
         session["tool_log"].append({"tool": "validate_updates", "error": str(error), "updates": result["updates"]})

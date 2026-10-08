@@ -16,7 +16,7 @@ from tools import normalize_day, normalize_time, find_openings, save_record, OPE
 
 def output(**changes):
     data = dict(intent="continue", action="provide", updates={}, departments=[], reasons={},
-                has_issue=False, routing_agreement=False, summary="", clarification="", policy_topic="", refusal="")
+                has_issue=False, routing_agreement=False, summary="", clarification="", policy_topic="", refusal="", details={})
     data.update(changes)
     return data
 
@@ -42,6 +42,115 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_tire_intake_uses_volunteered_details_and_retains_work(self):
+        s = new_session()
+        text = "my cars tires need to be changed i keep hearin a bumping noise when i dirve over 60"
+        send(s, text, has_issue=True, departments=["drivability", "maintenance"], details={
+            "concern": {"value": "Customer reports a bumping noise", "evidence": "bumping noise"},
+            "conditions": {"value": "Noise occurs above a reported speed of 60 mph", "evidence": "over 60"}},
+            clarification="When do you hear the noise?")
+        self.assertEqual(s["last_question"], "When did you first notice the problem?")
+        reply = send(s, "last week", has_issue=True, departments=["drivability", "maintenance"],
+                     details={"onset": {"value": "First noticed last week", "evidence": "last week"}},
+                     clarification="Where does the noise seem to come from?")
+        self.assertIn("Here is the technician note", reply)
+        self.assertNotIn("mph", s["fields"]["summary"])
+        self.assertNotIn("Customer observation", reply)
+        self.assertEqual(s["fields"]["expected_work"], "Customer-requested tire replacement")
+        send(s, "sure")
+        send(s, "yes can i come in friday", intent="appointment", updates={
+            "day": {"value": "Friday", "evidence": "friday"}})
+        process_turn("9am is fine", s, Mock())
+        send(s, "Calvin 1998 volvo s70", updates={
+            "customer_name": {"value": "Calvin", "evidence": "Calvin"},
+            "vehicle": {"value": "1998 volvo s70", "evidence": "1998 volvo s70"}})
+        self.assertEqual(s["pending"]["fields"]["expected_work"], "Customer-requested tire replacement")
+        send(s, "yes")
+        send(s, "yes")
+        self.assertEqual(len(s["records"]), 1)
+        self.assertEqual(s["records"][0]["original_messages"][0], text)
+
+    def test_clean_observations_extend_and_correct_without_raw_appendices(self):
+        s = new_session()
+        send(s, "a noise over 60 since last week", has_issue=True, departments=["drivability"], details={
+            "concern": {"value": "Customer reports a noise", "evidence": "a noise"},
+            "conditions": {"value": "Noise occurs above a reported speed of 60", "evidence": "over 60"},
+            "onset": {"value": "First noticed last week", "evidence": "last week"}})
+        send(s, "like i said over 60 and sometimes movin really slow", has_issue=True, details={
+            "conditions": {"value": "Noise occurs above a reported speed of 60 and sometimes at low speed",
+                           "evidence": "over 60 and sometimes movin really slow"}})
+        send(s, "the tires? jsut like i said", has_issue=True, details={
+            "location": {"value": "Customer suspects the tires; source is uncertain", "evidence": "the tires?"}})
+        note = s["fields"]["summary"]
+        self.assertEqual(note.count("60"), 1)
+        self.assertIn("low speed", note)
+        self.assertIn("uncertain", note)
+        self.assertNotIn("jsut", note)
+        send(s, "actually the back left, not the tires", has_issue=True, details={
+            "location": {"value": "Customer reports a possible rear-left source", "evidence": "the back left"}})
+        self.assertNotIn("suspects the tires", s["fields"]["summary"])
+        self.assertIn("last week", s["fields"]["summary"])
+
+    def test_invalid_observation_cannot_change_the_note(self):
+        s = filled()
+        old = s["fields"]["summary"]
+        reply = send(s, "it rattles", has_issue=True, details={
+            "location": {"value": "Engine compartment", "evidence": "under the hood"}})
+        self.assertIn("could not validate", reply)
+        self.assertEqual(s["fields"]["summary"], old)
+        self.assertFalse(s["records"])
+
+    def test_explicit_speed_units_are_preserved(self):
+        s = new_session()
+        send(s, "rattle above 60 km/h since yesterday", has_issue=True, departments=["drivability"], details={
+            "concern": {"value": "Customer reports a rattle", "evidence": "rattle"},
+            "conditions": {"value": "Rattle occurs above 60 km/h", "evidence": "above 60 km/h"},
+            "onset": {"value": "First noticed yesterday", "evidence": "yesterday"}})
+        self.assertIn("60 km/h", s["fields"]["summary"])
+
+    def test_empty_unknown_details_and_overlapping_clauses_are_not_copied(self):
+        s = new_session()
+        send(s, "bumping noise when driving over 60", has_issue=True, departments=["drivability"], details={
+            "concern": {"value": "Customer reports a bumping noise when driving over 60", "evidence": "bumping noise when driving over 60"},
+            "conditions": {"value": "Noise occurs when driving over 60", "evidence": "over 60"},
+            "onset": {"value": "Unknown", "evidence": ""}})
+        self.assertEqual(s["fields"]["summary"].count("60"), 1)
+        self.assertEqual(s["last_question"], "When did you first notice the problem?")
+
+    def test_paraphrased_tire_work_is_recovered_from_exact_request(self):
+        s = new_session()
+        send(s, "my tires need to be changed", has_issue=True, departments=["maintenance"],
+             summary="Customer requests tire replacement.", updates={"expected_work": {
+                 "value": "tire replacement", "evidence": "tires need to be changed"}})
+        self.assertEqual(s["fields"]["expected_work"], "Customer-requested tire replacement")
+
+    def test_generic_noise_observation_is_not_discarded_as_filler(self):
+        s = new_session()
+        send(s, "a noise", has_issue=True, departments=["drivability"], details={
+            "concern": {"value": "Customer reports a noise", "evidence": "a noise"}})
+        self.assertEqual(s["fields"]["summary"], "Customer reports a noise.")
+
+    def test_short_uncertain_source_survives_an_empty_model_detail(self):
+        s = new_session()
+        send(s, "bumping noise over 60", has_issue=True, departments=["drivability"], details={
+            "concern": {"value": "Customer reports a bumping noise", "evidence": "bumping noise"}})
+        send(s, "the tires? jsut like i said", has_issue=True)
+        self.assertIn("suspects the tires; source is uncertain", s["fields"]["summary"])
+        self.assertNotIn("jsut", s["fields"]["summary"])
+
+    def test_structured_note_keeps_the_starting_safeguards(self):
+        s = new_session()
+        text = "It cranks but wont start, all lights are on. I was able to get it goin a little bit but it wont stay at idle."
+        send(s, text, has_issue=True, departments=["electrical"], details={
+            "concern": {"value": "Customer reports a starting problem", "evidence": "wont start"}})
+        for word in ("cranks", "briefly starts", "idle", "lights"):
+            self.assertIn(word, s["fields"]["summary"])
+        self.assertNotIn("goin", s["fields"]["summary"])
+        send(s, "today at the stop light, it turned off but i was able to get it on long enough to get to the gas station",
+             has_issue=True)
+        self.assertIn("gas station", s["fields"]["summary"])
+        self.assertIn("briefly starts", s["fields"]["summary"])
+
     def test_no_start_note_is_readable_and_keeps_distinct_observations(self):
         s = new_session()
         send(s, "My car jsut wont start it kind of cranks and all the lights are on but it jsut wont start. i was able to get it goin a little bit but it wont stay at idle. This started today.",

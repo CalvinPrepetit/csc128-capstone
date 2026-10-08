@@ -85,6 +85,22 @@ def routine_service(text):
                    r"\b(?:want|need|please)\b.*\btire\b.*\b(?:changed|replaced)\b", text)
 
 
+def tire_request(text):
+    """Recognize explicit replacement wording, not a tire symptom alone."""
+    if matches(r"\b(?:not|don t|dont|cancel|no longer)\b", text):
+        return ""
+    match = re.search(r"\btires?\s+need\s+(?:to\s+be\s+)?(?:changed|replaced)\b", text, re.I)
+    return match.group() if match else ""
+
+
+def suspected_location(text):
+    """A short questioned location is an observation, not a confirmed fault."""
+    match = re.match(r"\s*(?:the\s+)?(tires?|wheels?|engine|(?:front|back|rear)(?:\s+(?:left|right))?|(?:ac\s+)?vents?)\s*\?", text, re.I)
+    if match:
+        return {"value": f"Customer suspects the {match.group(1).lower()}; source is uncertain", "evidence": match.group().strip()}
+    return None
+
+
 def policy_topic(text, proposed):
     """A source label is useful only when its document answers the actual question."""
     topics = {
@@ -137,8 +153,47 @@ def onset_observation(text):
     return ""
 
 
-def preserve_observations(session, text, question=""):
+def preserve_observations(session, text, question="", details=None):
     """Keep the latest answer per topic so revisions cannot silently erase observations."""
+    clean_details = session.setdefault("intake_details", {})
+    for topic, item in (details or {}).items():
+        if item is None:
+            continue
+        if (isinstance(item, dict) and not item.get("evidence")
+                and normalize(str(item.get("value", ""))) in {"", "unknown", "not specified"}):
+            continue  # An absent detail is not evidence of an observation.
+        if (not isinstance(item, dict) or set(item) != {"value", "evidence"}
+                or not isinstance(item["value"], str) or not item["value"].strip()
+                or len(item["value"]) > 500 or not isinstance(item["evidence"], str)
+                or not item["evidence"].strip()):
+            raise ValueError("Observation lacks customer evidence")
+        if item["evidence"] not in text:
+            if normalize(item["value"]) == normalize(clean_details.get(topic, "")):
+                continue  # Unchanged context is not a new observation.
+            raise ValueError("Observation lacks customer evidence")
+        if (topic == "onset" and matches(r"\b(?:driving|drive|dirve|moving|speed)\b", item["evidence"])
+                and not matches(r"\b(?:first|started|began|noticed|today|yesterday|ago|last|since)\b", item["evidence"])):
+            continue  # A driving condition does not establish when the problem began.
+        clean_details[topic] = item["value"].strip().rstrip(".") + "."
+    onset = onset_observation(text)
+    if onset:
+        clean_details["onset"] = onset + "."
+    if clean_details.get("concern"):
+        # Join AI-written observations once; short follow-ups cannot erase earlier topics.
+        note = ""
+        filler = {"customer", "reports", "reported", "vehicle", "occurs", "when",
+                  "the", "a", "an", "is", "at", "of", "first", "noticed"}
+        for answer in clean_details.values():
+            words = set(normalize(answer).split()) - filler
+            if not words <= set(normalize(note).split()):
+                note += (" " if note else "") + answer
+        source = " ".join(session.get("issue_messages", []) + [text])
+        if not matches(r"\b(?:mph|kph|km h|kmh|miles per hour|kilometers per hour)\b", source):
+            note = re.sub(r"\s*\b(?:mph|kph|km/h|kmh|miles per hour|kilometers per hour)\b", "", note, flags=re.I)
+        work = session["fields"]["expected_work"]
+        if work == "Customer-requested tire replacement" and not matches(r"\btires?\b.*\b(?:replacement|replace|replaced|change|changed)\b", note):
+            note += " Customer requests tire replacement; inspection is needed before any repair decision."
+        session["fields"]["summary"] = note
     observations = session.setdefault("observations", {})
     facts = starting_observations(text)
     observations.update(facts)
@@ -149,7 +204,7 @@ def preserve_observations(session, text, question=""):
             if sentence.strip() and not matches(r"\blights?\b", sentence)) + "."
     if moving_stall(text):
         observations["stalling sequence"] = stalling_note(text)
-    key = normalize(question)
+    key = "" if clean_details.get("concern") else normalize(question)
     if re.search(r"first notice|(?:did|does).*start|begin", key):
         key = "onset"
     if key and not matches(r"\b(?:no warning lights|no smoke|no visible smoke)\b", text):
@@ -166,6 +221,8 @@ def preserve_observations(session, text, question=""):
             observations.pop(topic, None)
     note = session["fields"]["summary"]
     for key, answer in observations.items():
+        if clean_details.get("concern") and key not in {"starting", "brief start", "idle", "lighting", "stalling sequence", "warning lights", "smoke"}:
+            continue  # Structured topics replace raw-answer appendices, not factual safeguards.
         if key == "onset" and answer.startswith("First noticed"):
             if normalize(answer) not in normalize(note):
                 note += " " + answer + "."
