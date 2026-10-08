@@ -70,6 +70,7 @@ class ConversationTests(unittest.TestCase):
             "vehicle": {"value": "1999 bmw 550", "evidence": "1999 bmw 550"}})
         self.assertIn("appointment request", reply)
         self.assertIn("oil change", reply)
+        self.assertEqual(s["fields"]["expected_work"], "oil change")
         self.assertIn("Saved demo appointment", process_turn("yes that looks fine", s, Mock()))
         process_turn("yes", s, Mock())
         self.assertEqual(len(s["records"]), 1)

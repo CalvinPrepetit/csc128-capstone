@@ -393,6 +393,10 @@ def handle(text, session, client_factory, control=None):
         return rate_limit_message(remaining)
     result = interpret(text, session, client_factory())
     replacement = tire_request(text)
+    routine = re.search(r"\b(?:oil change|tire rotation)\b", text, re.I)
+    if (not replacement and routine and re.search(r"\b(?:needs?|wants?|please|requests?|book|schedule)\b", clean)
+            and not re.search(r"\b(?:not|don t|dont|cancel|no longer)\b", clean)):
+        replacement = routine.group()
     proposed_work = result["updates"].get("expected_work") or {}
     if replacement and (not proposed_work or str(proposed_work.get("value", "")).casefold()
                         not in str(proposed_work.get("evidence", "")).casefold()):
