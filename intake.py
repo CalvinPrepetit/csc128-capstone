@@ -114,6 +114,11 @@ def starting_observations(text):
         facts["lighting"] = "Customer reports dim lights"
     elif matches(r"\b(?:all (?:of )?(?:the )?)?lights?\b.{0,20}\b(?:are on|still on|stayed on|remain on|remaining on|illuminate)\b", text):
         facts["lighting"] = "Customer reports the lights illuminate"
+    onset = onset_observation(text)
+    if onset:
+        facts["onset"] = onset
+    elif matches(r"\b(?:started|began|first noticed) today\b", text):
+        facts["onset"] = "First noticed today"
     return facts
 
 

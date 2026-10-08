@@ -44,7 +44,7 @@ def filled(kind="appointment"):
 class ConversationTests(unittest.TestCase):
     def test_no_start_note_is_readable_and_keeps_distinct_observations(self):
         s = new_session()
-        send(s, "My car jsut wont start it kind of cranks and all the lights are on but it jsut wont start. i was able to get it goin a little bit but it wont stay at idle",
+        send(s, "My car jsut wont start it kind of cranks and all the lights are on but it jsut wont start. i was able to get it goin a little bit but it wont stay at idle. This started today.",
              has_issue=True, departments=["electrical", "drivability"])
         note = s["fields"]["summary"]
         self.assertNotIn("jsut", note)
@@ -52,6 +52,7 @@ class ConversationTests(unittest.TestCase):
         self.assertIn("idle", note)
         self.assertIn("lights", note)
         self.assertIn("briefly starts", note)
+        self.assertIn("First noticed today", note)
         send(s, "today at the stop light, it turned off but i was able to get it on long enough to get to the gas station",
              has_issue=True, summary="Customer reports the engine stalled today at a stoplight and restarted to reach a gas station.",
              departments=["electrical", "drivability"])
