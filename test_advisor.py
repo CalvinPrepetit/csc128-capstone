@@ -116,6 +116,28 @@ class ConversationTests(unittest.TestCase):
         self.assertIn("Available demo intake times", reply)
         self.assertEqual(s["records"], [])
 
+    def test_affirmative_ticket_choice_confirms_routing_and_starts_ticket(self):
+        s = new_session()
+        send(s, "I need my tires changed", has_issue=True, summary="Customer requests tire replacement.",
+             departments=["maintenance"])
+        reply = send(s, "yes create a service ticket", intent="ticket", action="provide",
+                     has_issue=True, summary="Customer requests tire replacement.",
+                     departments=["maintenance"], routing_agreement=False)
+        self.assertTrue(s["departments_confirmed"])
+        self.assertEqual(s["intent"], "ticket")
+        self.assertIn("provide your name", reply)
+        self.assertNotIn("first notice", reply)
+        self.assertEqual(s["records"], [])
+
+    def test_task_choice_without_affirmative_does_not_accept_routing(self):
+        s = new_session()
+        send(s, "I need my tires changed", has_issue=True, summary="Customer requests tire replacement.",
+             departments=["maintenance"])
+        send(s, "create a service ticket", intent="ticket", action="provide",
+             has_issue=True, summary="Customer requests tire replacement.", departments=["maintenance"])
+        self.assertFalse(s["departments_confirmed"])
+        self.assertEqual(s["records"], [])
+
     def test_tire_request_is_work_not_a_symptom_or_policy_question(self):
         s = new_session()
         reply = send(s, "i need my tires changed", has_issue=False, action="question",

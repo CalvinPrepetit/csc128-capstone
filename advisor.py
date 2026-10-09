@@ -539,8 +539,11 @@ def handle(text, session, client_factory, control=None):
     if isinstance(work, dict) and isinstance(work.get("value"), str) and requested_work(work["value"], text):
         result["has_issue"] = True
     result["policy_topic"] = policy_topic(text, result["policy_topic"])
+    affirmative_choice = bool(re.match(r"^(?:yes|yep|yup|yeah|sure|okay|ok)\b", clean))
+    chose_task = result["intent"] in {"appointment", "ticket", "summary"}
     routing_ok = (session["stage"] == "departments"
-                  and (result["routing_agreement"] or result["action"] == "confirm")
+                  and (result["routing_agreement"] or result["action"] == "confirm"
+                       or (affirmative_choice and chose_task))
                   and not consent_conflict(text.replace("?", ""))
                   and (not result["has_issue"] or not result["departments"]
                        or set(result["departments"]) == set(session["fields"]["departments"])))
