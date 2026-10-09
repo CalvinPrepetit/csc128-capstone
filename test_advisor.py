@@ -42,6 +42,24 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_live_starting_summary_remains_the_displayed_note(self):
+        s = new_session()
+        send(s, "My car isnt starting", intent="triage", action="question", has_issue=True,
+             questions=["What happened?", "Any dashboard lights?", "Battery history?"])
+        factory = Mock(side_effect=AssertionError("No API call for interview answers"))
+        process_turn("It makes several clicks and never starts.", s, factory)
+        process_turn("Several clicks. The dashboard lights turn on.", s, factory)
+        note = "Customer reports the vehicle will not start, with several clicks and dashboard lights turning on, beginning this morning. Battery history is unknown."
+        reply = send(s, "I'm not sure about the battery. The problem started this morning.",
+                     intent="triage", has_issue=True, departments=["electrical"], summary=note,
+                     questions=[], details={
+                         "concern": {"value": "My car isnt starting", "evidence": "My car isnt starting"},
+                         "onset": {"value": "this morning", "evidence": "The problem started this morning."},
+                         "conditions": {"value": "several clicks and dashboard lights turn on", "evidence": "Several clicks. The dashboard lights turn on."}})
+        self.assertIn(note, reply)
+        self.assertTrue(s["fields"]["summary"].startswith(note))
+        self.assertNotIn("My car isnt starting", s["fields"]["summary"])
+
     def test_live_empty_clarification_array_does_not_reject_final_note(self):
         s = new_session()
         send(s, "My car isnt starting", intent="triage", action="question", has_issue=True,

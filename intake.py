@@ -268,8 +268,10 @@ def preserve_observations(session, text, question="", details=None, polished_not
         if topic == "concern":
             session.pop("provisional_concern", None)
     details = verified_details
-    if polished_note and session.get("intake_complete") and session.pop("provisional_concern", False):
+    if polished_note and session.get("intake_complete"):
+        # The completed AI note replaces the provisional/raw concern, not its facts.
         clean_details["concern"] = service_text(polished_note)
+        session.pop("provisional_concern", None)
     if session["fields"]["summary"] and not clean_details.get("concern"):
         clean_details["concern"] = service_text(session["fields"]["summary"])
         session["provisional_concern"] = True
@@ -327,7 +329,10 @@ def preserve_observations(session, text, question="", details=None, polished_not
     if matches(r"\blights?\b", question) and short_answer in {"yes", "no"}:
         facts["lighting"] = "Customer reports the dashboard lights turn on" if short_answer == "yes" else "Customer reports the dashboard lights do not turn on"
     observations.update(facts)
-    if "lighting" in facts and matches(r"\b(?:actually|correction|instead|not)\b", text):
+    lighting_correction = any(matches(
+        r"\b(?:actually|correction|instead)\b.{0,50}\blights?\b|\blights?\b.{0,30}\b(?:not|dim|off)\b", line)
+        for line in text.splitlines())
+    if "lighting" in facts and lighting_correction:
         # Remove the old lighting sentence; retained starting/idle facts are restored below.
         session["fields"]["summary"] = ". ".join(
             sentence.strip() for sentence in re.split(r"[.;]", session["fields"]["summary"])
@@ -388,7 +393,7 @@ def preserve_observations(session, text, question="", details=None, polished_not
             note += f" Customer observation ({label}): {answer.rstrip('.')}."
     if session.get("ac_inspection_requested") and not matches(r"\b(?:ac|a c|air conditioning)\b", note):
         note += " Customer also requests an air-conditioning inspection; no specific AC fault is assumed."
-    note = re.sub(r"\bunknown\s*\.", "", note, flags=re.I).strip()
+    note = re.sub(r"(?:^|(?<=\.))\s*unknown\s*\.", "", note, flags=re.I).strip()
     note = re.sub(r"^(?:car|vehicle)\s", "Customer reports the vehicle ", note, flags=re.I)
     note = service_text(note)
     session["fields"]["summary"] = note[:1].upper() + note[1:]
