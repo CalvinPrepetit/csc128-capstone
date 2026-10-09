@@ -42,6 +42,49 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_reported_empty_issue_flag_does_not_discard_ai_questions(self):
+        for text in ("Im hearing a weird noise from my car", "My car isnt starting"):
+            with self.subTest(text=text):
+                s = new_session()
+                reply = send(s, text, intent="triage", questions=["When did you first notice it?", "What do you hear?"])
+                self.assertIn("When did", reply)
+                self.assertNotIn("Tell me what is happening", reply)
+                self.assertEqual(s["stage"], "clarify")
+                factory = Mock(side_effect=AssertionError("Collect the answer without an API call"))
+                process_turn("Last week", s, factory)
+                client = client_for(output(has_issue=True, questions=[], departments=["drivability"],
+                                          summary="Customer reports an unusual vehicle noise, first noticed last week."))
+                reply = process_turn("Im unsure", s, lambda: client)
+                self.assertIn("Here is the technician note", reply)
+                self.assertNotIn("Customer reports: " + text, reply)
+                self.assertEqual(s["records"], [])
+                request = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+                self.assertIn(text, request["latest"])
+                self.assertEqual(request["issue_messages"], [])
+
+    def test_reported_malformed_optional_work_does_not_block_noise_correction(self):
+        s = new_session()
+        send(s, "i need my tires changed")
+        reply = send(s, "no actually i need it looked at there is a weird noise coming form my car",
+                     intent="triage", has_issue=True, questions=["When did you first notice the noise?"],
+                     departments=["drivability"], summary="Customer reports an unusual vehicle noise.",
+                     updates={"expected_work": "Customer-requested tire replacement"},
+                     details={"concern": "Weird noise coming from the car"})
+        self.assertNotIn("Invalid extraction", reply)
+        self.assertIn("first notice", reply)
+        self.assertEqual(s["records"], [])
+
+    def test_compact_request_has_no_empty_example_or_schema_payload(self):
+        from model_client import PROMPT
+        s = new_session()
+        client = client_for(output())
+        process_turn("my car is making a weird noise", s, lambda: client)
+        request = client.chat.completions.create.call_args.kwargs
+        self.assertLess(len(PROMPT.split()), 350)
+        self.assertEqual(request["response_format"], {"type": "json_object"})
+        self.assertNotIn('"has_issue": false', request["messages"][0]["content"])
+        client.chat.completions.create.assert_called_once()
+
     def test_complete_facts_suppress_extra_question_and_duplicate_car_wording(self):
         s = new_session()
         text = "My muffler rattles while driving. It started last week and seems to come from the rear of the car."
@@ -187,25 +230,24 @@ class ConversationTests(unittest.TestCase):
         self.assertNotIn("oil replacement", reply)
         self.assertEqual(s["fields"]["summary"].lower().count("oil change"), 1)
 
-    def test_bad_request_uses_one_validated_json_format_fallback(self):
+    def test_bad_request_does_not_trigger_a_second_api_call(self):
         s = new_session()
         send(s, "i need my tires changed")
         data = output(intent="appointment", action="question", routing_agreement=True)
         client = client_for(data)
         request = httpx.Request("POST", "https://example.invalid")
         error = BadRequestError("format rejected", response=httpx.Response(400, request=request), body={})
-        response = client.chat.completions.create.return_value
-        client.chat.completions.create.side_effect = [error, response]
+        client.chat.completions.create.side_effect = error
         reply = process_turn("yes when can icome in", s, lambda: client)
-        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertEqual(client.chat.completions.create.call_count, 1)
         self.assertEqual(client.chat.completions.create.call_args.kwargs["response_format"], {"type": "json_object"})
-        self.assertIn("Available demo intake times", reply)
+        self.assertIn("temporarily unavailable", reply)
         self.assertEqual(s["records"], [])
         client.chat.completions.create.reset_mock()
         client.chat.completions.create.side_effect = error
         s = new_session()
         process_turn("My car has a noise", s, lambda: client)
-        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertEqual(client.chat.completions.create.call_count, 1)
         self.assertEqual(s["records"], [])
 
     def test_polished_model_note_is_not_replaced_with_fragments(self):

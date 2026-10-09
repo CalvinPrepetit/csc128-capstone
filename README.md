@@ -123,7 +123,7 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 117 no-key tests passed. Clear tire requests and additions,
+Verification checkpoint: 120 no-key tests cover the intake and scheduling flow. Clear tire requests and additions,
 friendly scheduling replies, and separate vehicle/name replies work locally.
 Reported symptom conditions and added work remain in the reviewed note.
 Clear clicking and lighting
@@ -153,9 +153,10 @@ appendices. Explicit tire replacement stays requested work, not an authorized re
 speed units are not invented. The focused live samples completed
 6 booking turns, 5 triage/summary turns, and 6 ticket turns. Earlier failed runs
 remain in the development reports; they are not counted as passes. The model
-request uses [Groq strict structured outputs](https://console.groq.com/docs/structured-outputs)
-to prevent missing JSON fields, with Python validation still required for meaning,
-customer evidence, exact values, and consent.
+request uses JSON-object output with a compact instruction prompt and no automatic
+format retry. Python validates fields, meaning, customer evidence, exact values,
+and consent. An intake question plan overrides a contradictory empty issue flag;
+malformed optional work cannot discard an otherwise valid symptom description.
 
 The reported no-start conversation was also replayed with the live model: 7 turns
 reached available times while retaining the clicking symptom, appointment intent,

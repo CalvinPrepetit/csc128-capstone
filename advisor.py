@@ -212,9 +212,12 @@ def apply_updates(result, text, session):
         if key not in updates:
             continue
         item = updates[key]
-        if item is None or item == {} or item == {"value": "", "evidence": ""}:
+        if item is None or item == "" or item == {} or item == {"value": "", "evidence": ""}:
             continue  # Empty optional slots mean no proposed value, never an accepted value.
         if not isinstance(item, dict) or set(item) != {"value", "evidence"}:
+            if key == "expected_work":
+                session["tool_log"].append({"tool": "validate_work", "ignored": "Work lacks customer evidence"})
+                continue  # Optional work cannot block the customer's symptom description.
             raise ValueError("Invalid extraction")
         value, evidence = item["value"], item["evidence"]
         if key == "time" and "day" in parsed and not re.search(r"\d|\b(?:noon|midday)\b", text, re.I):
@@ -521,7 +524,9 @@ def handle(text, session, client_factory, control=None):
     remaining = math.ceil(session.get("retry_until", 0) - time.time())
     if remaining > 0:
         return rate_limit_message(remaining)
-    model_text = "\n".join(session.get("queued_observations", []) + [text])
+    model_text = "\n".join(dict.fromkeys(
+        (session.get("issue_messages", []) if control == "finish" else [])
+        + session.get("queued_observations", []) + [text]))
     result = interpret(model_text, session, client_factory())
     if session.get("safety_handoff") and (answering_issue or control == "finish") and result["refusal"] == "unsafe":
         result["refusal"] = ""  # Documenting reported facts follows the visible safety referral.
@@ -646,7 +651,8 @@ def handle(text, session, client_factory, control=None):
             candidate["departments_confirmed"] = False
         if symptom_answer and "about the AC" in session["last_question"]:
             candidate["ac_detail_collected"] = True
-        if result["has_issue"]:
+        question_only = bool(result.get("questions")) and not (result["summary"] or result["details"])
+        if result["has_issue"] and not question_only:
             preserve_observations(candidate, model_text, session["last_question"] if symptom_answer else "",
                                   result["details"], result["summary"])
         for part in candidate.get("requested_parts", []):
