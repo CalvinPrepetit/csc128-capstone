@@ -89,7 +89,9 @@ a vehicle fault.
 - `knowledge.py`: fictional guide and small retriever.
 - `test_advisor.py`: deterministic and simulated failure tests; no API key required.
 
-The design PDF and personal demo materials are separate submission deliverables.
+Final turn-in materials are in `submission/`: the approved proposal, 3-page design
+PDF and editable source, recording rundown, and submission checklist. Upload the
+PDF and your recorded video separately, alongside the public app and repository links.
 
 ## Run and Deploy
 
