@@ -66,10 +66,10 @@ class ConversationTests(unittest.TestCase):
     def test_muffler_details_added_work_and_partial_identity_survive(self):
         s = new_session(records=[{"day": "Monday", "time": "11:00 AM", "confirmation_id": "older-demo"}])
         send(s, "there is a weird noise coming from my muffler", has_issue=True,
-             summary="Noise from muffler.", departments=["drivability"])
+             summary="Noise from muffler.", departments=[])
         process_turn("last week", s, Mock())
         reply = send(s, "when driving", has_issue=True, summary="Noise from muffler.",
-                     departments=["drivability"], details={
+                     departments=[], details={
                          "onset": {"value": "First noticed last week", "evidence": "last week"}})
         self.assertIn("when driving", reply)
         reply = send(s, "i guess that works. also could i get my tires changed while im here ?",

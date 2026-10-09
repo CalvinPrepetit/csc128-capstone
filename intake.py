@@ -9,6 +9,15 @@ def detail_words(text):
     return set(normalize(text).split()) - NOTE_FILLER
 
 
+def routing_hint(text):
+    """Use approved service areas for explicit components when the model gives none."""
+    areas = {"drivability": r"\b(?:muffler|exhaust|brakes?|steering|transmission|engine)\b",
+             "electrical": r"\b(?:battery|starter|wiring|headlights?|dashboard lights)\b",
+             "interior": r"\b(?:ac|a c|air conditioning|vents?|seats?|interior trim)\b",
+             "exterior": r"\b(?:windshield|body panel|bumper|paint|dent)\b"}
+    return [area for area, pattern in areas.items() if matches(pattern, text)]
+
+
 def normalize(text):
     clean = " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
     return re.sub(r"\b(?:appoitnment|appoitment|appointmet)\b", "appointment", clean)
@@ -346,6 +355,8 @@ def preserve_observations(session, text, question="", details=None):
     note = re.sub(r"\bunknown\s*\.", "", note, flags=re.I).strip()
     note = re.sub(r"^(?:car|vehicle)\s", "Customer reports the vehicle ", note, flags=re.I)
     session["fields"]["summary"] = note[:1].upper() + note[1:]
+    if not session["fields"]["departments"]:
+        session["fields"]["departments"] = routing_hint(" ".join(session.get("issue_messages", []) + [text]))
     if "starting" in observations and "electrical" not in session["fields"]["departments"]:
         session["fields"]["departments"].append("electrical")
         session["departments_confirmed"] = False
