@@ -79,6 +79,7 @@ def clear_agreement(text):
     if consent_conflict(text):
         return False
     clean = re.sub(r"\b(?:pelas e|pleas e|pelase|pleae|plesae)\b", "please", normalize(text))
+    clean = re.sub(r"^(?:thankyou|thank you|thanks)(?: so much)?\s+", "", clean)
     return bool(re.fullmatch(
         r"(?:(?:great|okay|ok|perfect|thanks) )?"
         r"(?:yes|y|yep|yup|yeah|yea|confirm|correct|seems correct|that seems correct|looks good|works for me|that works|go ahead(?: and (?:save|book) it)?|yes that s correct|yes thats correct)"
@@ -100,7 +101,7 @@ def intake_question(session, proposed):
     known = session.get("intake_details", {})
     onset = known.get("onset") or re.search(r"\b(?:last week|last month|today|yesterday|morning|mornin|evening|ago|since|started|first noticed|monday|mondya|tuesday|wednesday|thursday|friday|saturday|sunday)\b", details)
     conditions = known.get("conditions") or re.search(r"\b(?:idle|idling|braking|accelerating|turning|driving|dirve|drive|speed|stopped|moving|movin|parked|sitting|starting|stop light)\b|\b(?:over|above|under|below) \d+\b", details)
-    location = known.get("location") or re.search(r"\b(?:front|back|rear|underneath|under|inside|outside|wheels?|tires?|tyres?|engine|vents?)\b", details)
+    location = known.get("location") or re.search(r"\b(?:front|back|rear|underneath|under|inside|outside|wheels?|tires?|tyres?|engine|muffler|exhaust|hood|vents?)\b", details)
     if session["questions_asked"] == 0 and not onset:
         return "When did you first notice the problem?"
     no_start = re.search(r"(?:won t|wont|will not|not|doesn t|doesnt).{0,18}(?:start|turn on|tur non)|no start", details)
@@ -184,7 +185,7 @@ def advance(session):
                     return (("That selected time is unavailable. " if f["time"] else "") +
                             f"For {f['day']}, the available demo times are: " + ", ".join(choices) +
                             ". Which time would you like? These are repeating weekdays, not calendar dates.")
-            return openings + "\n\n" + ("Your selected time is unavailable. " if f["day"] and f["time"] else "") + "Which day and time would you like?"
+            return ((f"No demo openings remain for {f['day']} in this session. " if f["day"] else "") + openings + "\n\nWhich day and time would you like?")
     missing = [label for key, label in (("customer_name", "name"), ("vehicle", "vehicle year, make, and model (or the details you know)")) if not f[key]]
     if missing:
         session["stage"] = "collect"
@@ -373,9 +374,25 @@ def handle(text, session, client_factory, control=None):
             session["departments_confirmed"] = False
             return advance(session)
     answering_issue = session["stage"] == "clarify" and not control
+    tire_work = tire_request(text)
+    service_filler = {"i", "my", "the", "just", "jsut", "also", "and", "could", "can", "please", "guess", "that", "works", "while", "im", "here"}
+    if (tire_work and not session["last_saved"] and not control
+            and set(clean.replace(normalize(tire_work), "").split()) <= service_filler):
+        invalidate(session)
+        f = session["fields"]
+        if "tire replacement" not in f["expected_work"]:
+            if f["expected_work"] == "Diagnostic inspection of reported concern":
+                f["expected_work"] = ""
+            f["expected_work"] = (f["expected_work"] + "; " if f["expected_work"] else "") + "Customer-requested tire replacement"
+        session["departments_confirmed"] = session["departments_confirmed"] and "maintenance" in f["departments"]
+        f["departments"] = list(dict.fromkeys(f["departments"] + ["maintenance"]))
+        if "tire replacement" not in f["summary"].lower():
+            f["summary"] = (f["summary"] + " " if f["summary"] else "") + "Customer requests tire replacement."
+        session["issue_messages"].append(text)
+        return advance(session)
     if control == "confirm" or (not answering_issue and clear_agreement(text)):
         return confirm(session)
-    if control == "skip" or (answering_issue and uncertain_reply(text)):
+    if control == "skip" or (answering_issue and (uncertain_reply(text) or clean in {"skip", "skip question"})):
         if session.get("queued_observations"):
             session["questions_asked"] = 3
             return handle("No further symptom details are known.", session, client_factory, control="finish")
@@ -441,6 +458,17 @@ def handle(text, session, client_factory, control=None):
             invalidate(session)
             session["fields"].update(customer_name=identity[1].strip(), vehicle=identity[2].strip())
             return advance(session)
+        vehicle = re.fullmatch(r"(?:my (?:car|vehicle) is (?:a )?)?((?:19|20)\d{2}\s+[A-Za-z][A-Za-z0-9 .'-]{1,100})", text.strip(), re.I)
+        if vehicle:
+            invalidate(session)
+            session["fields"]["vehicle"] = vehicle[1].strip()
+            return advance(session)
+        name = re.fullmatch(r"(?:my name is |i am |i m |im )?([A-Za-z][A-Za-z .'-]{0,60})", clean, re.I)
+        if (name and session["fields"]["vehicle"] and not session["fields"]["customer_name"]
+                and len(name[1].split()) <= 4 and not re.search(r"\b(?:car|vehicle|need|want|change|cancel|skip|not|no|thanks|appointment)\b", name[1])):
+            invalidate(session)
+            session["fields"]["customer_name"] = text.strip() if clean == name[1] else name[1].strip()
+            return advance(session)
     # Collect clearly recognizable observations without spending a call per reply.
     onset = re.fullmatch(r"(?:this|today this|last) (?:morning|mornin|evening|week|month)|today|yesterday|(?:about )?(?:an?|\d+) (?:hours?|minutes?|days?|weeks?) ago", clean)
     simple_detail = onset or re.search(r"\b(?:clicks?|clicking|clickin|cranks?|lights?|dashboard)\b", clean)
@@ -481,6 +509,16 @@ def handle(text, session, client_factory, control=None):
     if replacement and (not proposed_work or str(proposed_work.get("value", "")).casefold()
                         not in str(proposed_work.get("evidence", "")).casefold()):
         result["updates"]["expected_work"] = {"value": replacement, "evidence": replacement}
+    if tire_request(text):
+        result["has_issue"] = True
+        result["departments"] = list(dict.fromkeys(session["fields"]["departments"] + result["departments"] + ["maintenance"]))
+        # Work requested alone needs no symptom interview or shop-policy answer.
+        if not re.search(r"\b(?:noise|click|shake|shaking|vibration|smoke|leak|hiss|broken|problem|fault|won t|wont)\b", clean):
+            result["action"] = "provide"
+            result["policy_topic"] = result["refusal"] = result["clarification"] = ""
+            if not session["fields"]["summary"]:
+                result["summary"] = "Customer requests tire replacement."
+                result["details"] = {"concern": {"value": result["summary"], "evidence": text}}
     location = suspected_location(text)
     if location and session["fields"]["summary"] and not result["details"].get("location"):
         result["details"]["location"] = location

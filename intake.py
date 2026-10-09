@@ -86,12 +86,12 @@ def requested_work(value, text):
     service = r"\b(?:oil change|tire rotation|tire replacement|routine|scheduled maintenance)\b"
     action = r"\b(?:inspect|inspection|diagnostic|diagnosis|replace|replacement|repair|rotate|change|changed|check|checked|service)\b"
     return matches(service, value) or (matches(action, value) and
-           matches(r"\b(?:want|need|please|request|book|schedule|can you|could you)\b", text))
+           matches(r"\b(?:want|need|please|request|book|schedule|can you|could you|can i|could i)\b", text))
 
 
 def routine_service(text):
     return matches(r"\b(?:oil change|tire rotation|tire replacement|routine|scheduled maintenance)\b|"
-                   r"\b(?:want|need|please)\b.*\btire\b.*\b(?:changed|replaced)\b", text)
+                   r"\b(?:want|need|please|get)\b.*\btires?\b.*\b(?:changed|chaned|replaced)\b", text)
 
 
 def tire_request(text):
@@ -99,7 +99,7 @@ def tire_request(text):
     if matches(r"\b(?:not|don t|dont|cancel|no longer)\b", text):
         return ""
     match = re.search(r"\btires?\s+need\s+(?:to\s+be\s+)?(?:changed|replaced)\b|"
-                      r"\b(?:need|want)\s+(?:my |the )?tires?\s+(?:changed|chaned|replaced)\b", text, re.I)
+                      r"\b(?:need|want|get)\s+(?:my |the )?tires?\s+(?:changed|chaned|replaced)\b", text, re.I)
     return match.group() if match else ""
 
 
@@ -143,7 +143,9 @@ def policy_topic(text, proposed):
     if matches(r"\b(?:loaner|rental|payment|financing|free snacks|waiting room)\b", text):
         return "unknown"
     if proposed in topics and not matches(topics[proposed], text):
-        return "unknown"
+        return ""
+    if proposed == "unknown" and not matches(r"\b(?:what|how|where|when|do you|can you|does|is there)\b", text):
+        return ""
     return proposed
 
 
@@ -224,19 +226,31 @@ def preserve_observations(session, text, question="", details=None):
             if not detail_words(previous) <= detail_words(answer):
                 answer = previous + " " + answer
         clean_details[topic] = answer
+    if session["fields"]["summary"] and not clean_details.get("concern"):
+        clean_details["concern"] = session["fields"]["summary"]
     key = normalize(question)
+    short_answer = normalize(text.splitlines()[-1])
     topic = ("onset" if re.search(r"first notice|(?:did|does).*start|begin", key)
-             else "location" if re.search(r"where|which.*(?:area|part)", key) else "additional")
-    covered = any(isinstance(item, dict) and item.get("evidence") and item["evidence"] in text
-                  and normalize(item.get("value", "")) not in {"", "unknown", "not specified"}
-                  for item in (details or {}).values()) or bool(starting_observations(text))
+             else "location" if re.search(r"where|which.*(?:area|part)", key)
+             else "conditions" if re.search(r"when|what.*(?:doing|speed)", key) else "additional")
+    if topic == "conditions" and not matches(r"\b(?:driving|moving|idle|idling|braking|accelerating|turning|speed|over|under|while|when)\b", text):
+        topic = "additional"
+    supplied = (details or {}).get(topic)
+    covered = (isinstance(supplied, dict) and supplied.get("evidence") and supplied["evidence"] in text
+               and normalize(supplied.get("value", "")) not in {"", "unknown", "not specified"})
     temporal = matches(r"\b(?:ago|today|yesterday|morning|evening|last|since|first noticed)\b", text)
     if topic == "onset" and not temporal:
         topic = "additional"  # Customers sometimes answer a different useful question.
     if key and not covered:
         # Preserve unanswered topics even when the model sends an empty or stale note.
         lines = [line.strip() for line in text.splitlines() if line.strip()
-                 and (topic == "onset" or normalize(line) not in normalize(clean_details.get("onset", "")))]
+                 and normalize(line) not in {"skip", "skip question", "no further symptom details are known"}
+                 and not starting_observations(line)
+                 and (topic == "onset" or normalize(line) not in normalize(clean_details.get("onset", "")))
+                 and not any(isinstance(item, dict) and item.get("evidence") and item["evidence"] in line
+                             and item.get("value") for item in (details or {}).values())]
+        if matches(r"\blights?\b", question) and short_answer in {"yes", "no"}:
+            lines = [line for line in lines if normalize(line) not in {"yes", "no"}]
         answer_text = "; ".join(lines)
         answer = ("First noticed " if topic == "onset" else "Customer reports ") + answer_text.rstrip(".") + "."
         previous = clean_details.get(topic, "")
@@ -265,6 +279,8 @@ def preserve_observations(session, text, question="", details=None):
         session["fields"]["summary"] = note
     observations = session.setdefault("observations", {})
     facts = starting_observations(text)
+    if matches(r"\blights?\b", question) and short_answer in {"yes", "no"}:
+        facts["lighting"] = "Customer reports the dashboard lights turn on" if short_answer == "yes" else "Customer reports the dashboard lights do not turn on"
     observations.update(facts)
     if "lighting" in facts and matches(r"\b(?:actually|correction|instead|not)\b", text):
         # Remove the old lighting sentence; retained starting/idle facts are restored below.
@@ -289,6 +305,8 @@ def preserve_observations(session, text, question="", details=None):
         elif matches(r"\b(?:actually|now|correction)\b", text) and topic in normalize(text):
             observations.pop(topic, None)
     note = session["fields"]["summary"]
+    if "Customer-requested tire replacement" in session["fields"]["expected_work"] and not matches(r"\btire replacement\b|\brequests?\b.*\btires?\b", note):
+        note += " Customer requests tire replacement; inspection is needed before any repair decision."
     onset_note = clean_details.get("onset", "")
     if onset_note and normalize(onset_note) not in normalize(note):
         note += " " + onset_note

@@ -42,6 +42,58 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_tire_request_is_work_not_a_symptom_or_policy_question(self):
+        s = new_session()
+        reply = send(s, "i need my tires changed", has_issue=False, action="question",
+                     policy_topic="unknown", summary="Tires changed.", departments=["maintenance"])
+        self.assertNotIn("first notice", reply)
+        self.assertNotIn("shop guide", reply)
+        self.assertIn("Customer requests tire replacement", reply)
+        factory = Mock(side_effect=AssertionError("Clear scheduling and consent should be local"))
+        process_turn("yes thats correct", s, factory)
+        process_turn("yes please friday if possible", s, factory)
+        process_turn("2 pm works", s, factory)
+        process_turn("Calvin 2023 jeep cherokee", s, factory)
+        process_turn("actually can i do monday", s, factory)
+        reply = process_turn("11am thanks", s, factory)
+        self.assertNotIn("shop guide", reply)
+        self.assertIn("Monday at 11:00 AM", reply)
+        process_turn("yes", s, factory)
+        self.assertIn("requests tire replacement", s["records"][0]["summary"])
+        self.assertNotIn("skip", s["records"][0]["summary"])
+        factory.assert_not_called()
+
+    def test_muffler_details_added_work_and_partial_identity_survive(self):
+        s = new_session(records=[{"day": "Monday", "time": "11:00 AM", "confirmation_id": "older-demo"}])
+        send(s, "there is a weird noise coming from my muffler", has_issue=True,
+             summary="Noise from muffler.", departments=["drivability"])
+        process_turn("last week", s, Mock())
+        reply = send(s, "when driving", has_issue=True, summary="Noise from muffler.",
+                     departments=["drivability"], details={
+                         "onset": {"value": "First noticed last week", "evidence": "last week"}})
+        self.assertIn("when driving", reply)
+        reply = send(s, "i guess that works. also could i get my tires changed while im here ?",
+                     has_issue=False, summary="Noise from muffler.")
+        self.assertIn("tire replacement", reply)
+        self.assertIn("when driving", reply)
+        self.assertIn("maintenance", s["fields"]["departments"])
+        factory = Mock(side_effect=AssertionError("Clear replies must be local even with an API outage"))
+        process_turn("Thankyou so much yes", s, factory)
+        reply = process_turn("can i come in monday", s, factory)
+        self.assertIn("No demo openings remain for Monday", reply)
+        process_turn("i guess tuesday then", s, factory)
+        process_turn("9am is fine", s, factory)
+        for _ in range(2):
+            reply = process_turn("2023 honda civic", s, factory)
+            self.assertIn("provide your name", reply)
+            self.assertEqual(s["fields"]["vehicle"], "2023 honda civic")
+        process_turn("Calvin", s, factory)
+        process_turn("yes", s, factory)
+        self.assertEqual(s["records"][-1]["day"], "Tuesday")
+        self.assertIn("when driving", s["records"][-1]["summary"])
+        self.assertIn("tire replacement", s["records"][-1]["summary"])
+        factory.assert_not_called()
+
     def test_provider_failure_during_details_still_allows_review_and_booking(self):
         s = new_session()
         factory = Mock(side_effect=AssertionError("Local action must not call API"))
