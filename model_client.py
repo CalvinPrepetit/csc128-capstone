@@ -80,6 +80,8 @@ engine/exhaust/brakes/steering/transmission/running noise -> drivability.
 Maintenance is requested upkeep, never a presumed cure for a fault.
 Use empty reasons for unused departments. Preserve every concern in routing/note.
 
+If safety_handoff is true, Python has already shown the safety referral. Continue
+documenting symptoms and drafting a complete note; never imply it is safe to drive.
 BOUNDARIES: refuse exact prices, warranty decisions, insurance claims, recall
 lookups, diagnoses, saved-record changes, unrelated tasks. Severe brake loss,
 fire/smoke/fuel leakage or unsafe control requires unsafe handoff; never advise driving.
@@ -91,6 +93,7 @@ and policy requests may have both. Uncertainty about the cause is not declining.
 def interpret(text, session, client):
     context = {"latest": text, "fields": session["fields"], "intent": session["intent"],
                "stage": session["stage"], "questions_asked": session["questions_asked"],
+               "safety_handoff": session.get("safety_handoff", False),
                "last_question": session.get("last_question", ""), "issue_messages": session.get("issue_messages", []),
                "observations": session.get("observations", {}),
                "details": session.get("intake_details", {}),

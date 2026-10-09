@@ -345,7 +345,33 @@ def handle(text, session, client_factory, control=None):
     if refusal:
         invalidate(session)
         session["tool_log"].append({"tool": "intake_boundary", "reason": refusal})
+        if refusal == "unsafe" and not session["last_saved"]:
+            session["safety_handoff"] = True
+            session["issue_messages"].append(text)
+            concern = ("Customer reports smoke from under the hood." if re.search(r"\bsmoke\b.*\bhood\b", clean)
+                       else "Customer reports: " + text.strip().rstrip(".") + ".")
+            session.setdefault("intake_details", {})["concern"] = concern
+            session["fields"]["summary"] = session["intake_details"]["concern"]
+            session["fields"]["departments"] = ["drivability"]
+            session["departments_confirmed"] = False
+            session["stage"] = "safety"
+            return REFUSALS[refusal] + "\n\nI kept your concern. Would you like me to prepare an intake note for a service advisor? This does not mean the vehicle is safe to drive."
         return REFUSALS[refusal]
+    if session["stage"] == "safety" and re.fullmatch(r"(?:yes|yeah|yep|sure|ok|okay)(?: that s what i want| thats what i want| please)?", clean):
+        session["stage"] = "clarify"
+        session["questions_asked"] += 1
+        session["last_question"] = "When did you first notice the problem?"
+        return session["last_question"] + "\n\nIf unsure, choose Skip question."
+    if session["fields"]["summary"] and not session["last_saved"] and re.search(r"\b(?:change|instead|actually|i think|i thinks)\b", clean):
+        aliases = {"drivability": r"\b(?:drivability|driving|drivin)\b", "electrical": r"\belectrical\b",
+                   "interior": r"\binterior\b", "exterior": r"\bexterior\b", "maintenance": r"\bmaintenance\b"}
+        chosen = [name for name, pattern in aliases.items() if re.search(pattern, clean)]
+        if chosen and not re.search(r"\b(?:not|no) (?:a |an |the )?(?:driving|drivin|drivability|electrical|interior|exterior|maintenance)\b|\b(?:don t|dont) change\b", clean):
+            invalidate(session)
+            session["fields"]["departments"] = chosen
+            session["reasons"] = {d: "Customer-requested service area for inspection; not a diagnosis." for d in chosen}
+            session["departments_confirmed"] = False
+            return advance(session)
     answering_issue = session["stage"] == "clarify" and not control
     if control == "confirm" or (not answering_issue and clear_agreement(text)):
         return confirm(session)
@@ -416,7 +442,7 @@ def handle(text, session, client_factory, control=None):
             session["fields"].update(customer_name=identity[1].strip(), vehicle=identity[2].strip())
             return advance(session)
     # Collect clearly recognizable observations without spending a call per reply.
-    onset = re.fullmatch(r"(?:this|today this|last) (?:morning|mornin|evening|week|month)|today|yesterday|\d+ days? ago", clean)
+    onset = re.fullmatch(r"(?:this|today this|last) (?:morning|mornin|evening|week|month)|today|yesterday|(?:about )?(?:an?|\d+) (?:hours?|minutes?|days?|weeks?) ago", clean)
     simple_detail = onset or re.search(r"\b(?:clicks?|clicking|clickin|cranks?|lights?|dashboard)\b", clean)
     if (answering_issue and simple_detail and len(text) < 200 and not requested_intent(text)
             and "?" not in text and not re.search(r"\b(?:actually|instead|correction|change|cancel|book|schedule|appointment)\b", clean)):
@@ -438,6 +464,8 @@ def handle(text, session, client_factory, control=None):
         return rate_limit_message(remaining)
     model_text = "\n".join(session.get("queued_observations", []) + [text])
     result = interpret(model_text, session, client_factory())
+    if session.get("safety_handoff") and answering_issue and result["refusal"] == "unsafe":
+        result["refusal"] = ""  # Documenting reported facts follows the visible safety referral.
     if session.get("queued_observations"):
         result["has_issue"] = True
         result["updates"].pop("day", None)
@@ -600,5 +628,7 @@ def process_turn(text, session, client_factory, control=None):
         reply = ("An engine shutting off while driving is a safety concern. I cannot tell you "
                  "it is safe to drive; contact a human service advisor or towing provider "
                  "about getting the vehicle inspected.\n\n" + reply)
+    if session.get("safety_handoff") and REFUSALS["unsafe"] not in reply:
+        reply = REFUSALS["unsafe"] + "\n\n" + reply
     session["messages"].append({"role": "assistant", "content": reply})
     return reply

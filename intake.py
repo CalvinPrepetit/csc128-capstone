@@ -26,7 +26,7 @@ def boundary(text):
               r"\b(?:gasoline|gas|fuel) (?:is )?(?:leaking|pouring)\b|"
               r"\b(?:leaking|pouring) (?:gasoline|gas|fuel)\b|"
               r"\b(?:on fire|flames|smoke coming|smoke pouring)\b|"
-              r"\b(?:engine|car|vehicle) (?:is )?smoking\b|\bsmoke (?:from|under)\b")
+              r"\b(?:engine|car|vehicle) (?:is )?smoking\b|\bsmoke (?:from|form|under)\b")
     clean = normalize(text)
     for risk in re.finditer(danger, clean):
         prefix = clean[:risk.start()]
@@ -224,6 +224,22 @@ def preserve_observations(session, text, question="", details=None):
             if not detail_words(previous) <= detail_words(answer):
                 answer = previous + " " + answer
         clean_details[topic] = answer
+    key = normalize(question)
+    topic = ("onset" if re.search(r"first notice|(?:did|does).*start|begin", key)
+             else "location" if re.search(r"where|which.*(?:area|part)", key) else "additional")
+    supplied = (details or {}).get(topic)
+    covered = any(isinstance(item, dict) and item.get("evidence") and item["evidence"] in text
+                  and normalize(item.get("value", "")) not in {"", "unknown", "not specified"}
+                  for item in (details or {}).values()) or bool(starting_observations(text))
+    temporal = matches(r"\b(?:ago|today|yesterday|morning|evening|last|since|first noticed)\b", text)
+    if topic == "onset" and not temporal:
+        topic = "additional"  # Customers sometimes answer a different useful question.
+    if key and not covered:
+        # Preserve unanswered topics even when the model sends an empty or stale note.
+        answer = ("First noticed " if topic == "onset" else "Customer reports: ") + text.strip().rstrip(".") + "."
+        previous = clean_details.get(topic, "")
+        if not detail_words(answer) <= detail_words(previous):
+            clean_details[topic] = answer if topic != "additional" or not previous else previous + " " + answer
     onset = onset_observation(text)
     if onset:
         clean_details["onset"] = onset + "."

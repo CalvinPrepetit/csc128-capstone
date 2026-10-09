@@ -42,6 +42,48 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_safety_intake_keeps_answers_and_department_corrections(self):
+        s = new_session()
+        factory = Mock(side_effect=AssertionError("Clear controls should not use the API"))
+        reply = process_turn("Hi i need to get my car looked at there is smoke coming from the hood", s, factory)
+        self.assertIn("towing", reply)
+        self.assertIn("prepare an intake note", reply)
+        reply = process_turn("Yes thats what i want", s, factory)
+        self.assertIn("first notice", reply)
+        # Deliberately simulate the bad model: short note, wrong department, no observations.
+        reply = send(s, "about an hour ago", has_issue=True, departments=["electrical"],
+                     summary="Smoke from hood.")
+        reply = send(s, "smoke and hissing", has_issue=True, departments=["electrical"],
+                     summary="Smoke from hood.")
+        self.assertIn("hour ago", reply)
+        self.assertIn("hissing", reply)
+        for correction in ("im not sure i thinks its actually a driving issue", "change it to a driving issue", "i think its a drivin issue"):
+            reply = process_turn(correction, s, factory)
+            self.assertEqual(s["fields"]["departments"], ["drivability"])
+            self.assertIn("hissing", reply)
+            self.assertIn("towing", reply)
+        process_turn("yes", s, factory)
+        process_turn("i want to schedule an appointment", s, factory)
+        process_turn("Friday at 9am", s, factory)
+        process_turn("Demo 2020 Honda Civic", s, factory)
+        self.assertFalse(s["records"])
+        process_turn("yes", s, factory)
+        self.assertIn("hissing", s["records"][0]["summary"])
+        self.assertIn("hour ago", s["records"][0]["summary"])
+        factory.assert_not_called()
+
+    def test_missing_model_topics_do_not_erase_other_concerns(self):
+        for concern, answer in (("coolant leaking near front", "a puddle below the front bumper"),
+                                ("car shaking at highway speed", "mainly in the back left")):
+            with self.subTest(concern=concern):
+                s = new_session()
+                send(s, concern, has_issue=True, departments=["drivability"], summary=concern,
+                     details={"concern": {"value": concern, "evidence": concern}})
+                send(s, "about an hour ago", has_issue=True, summary=concern)
+                reply = send(s, answer, has_issue=True, summary=concern)
+                self.assertIn("hour ago", s["fields"]["summary"])
+                self.assertIn(answer, s["fields"]["summary"])
+
     def test_empty_model_notes_cannot_drop_clicking_and_normal_lights(self):
         s = new_session()
         text = "ok my car will not turn on i have no idea what to do"
