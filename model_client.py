@@ -22,9 +22,11 @@ Understand typos. triage=concern; appointment=visit; ticket=service record;
 summary=note review; information=definition; continue=current task. Keep chosen tasks.
 has_issue is a boolean: TRUE for a symptom/service description or follow-up,
 FALSE for identity, visit-only answers and agreement. Symptoms are not appointments.
-On an initial concern, questions is 1-3 useful missing-fact questions, otherwise [].
+On an initial concern, questions is 1-3 useful missing-symptom questions, otherwise [].
+Ask onset, conditions or location, never identity or appointment preferences here.
 Do not repeat supplied facts or interview routine jobs. Python batches the answers.
-When intake_complete, ask no questions; write the cumulative note and route it.
+When intake_complete, has_issue=true, questions=[], summary MUST contain the
+cumulative technician note and departments MUST contain appropriate guide labels.
 summary: 1-2 readable third-person sentences preserving ALL concerns/jobs,
 uncertainty and symptom sequence. No diagnoses, invented facts/units or promises.
 Tires and oil changed means tire replacement AND oil change. Use the department guide.
@@ -42,7 +44,10 @@ Never declare safe driving or a save. Policies only when asked; unknown for abse
 """
 
 def interpret(text, session, client):
-    context = {"latest": text, "fields": session["fields"], "intent": session["intent"],
+    task = ("Write the final technician summary and department routing from ALL customer statements. "
+            "The interview is complete. Do not leave summary or departments empty."
+            if session.get("intake_complete") else "Interpret the latest message in the current conversation stage.")
+    context = {"task": task, "latest": text, "fields": session["fields"], "intent": session["intent"],
                "stage": session["stage"], "questions_asked": session["questions_asked"],
                "safety_handoff": session.get("safety_handoff", False),
                "last_question": session.get("last_question", ""),

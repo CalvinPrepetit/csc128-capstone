@@ -76,6 +76,7 @@ class ConversationTests(unittest.TestCase):
                 request = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
                 self.assertIn(text, request["latest"])
                 self.assertEqual(request["issue_messages"], [])
+                self.assertIn("final technician summary", request["task"])
 
     def test_reported_malformed_optional_work_does_not_block_noise_correction(self):
         s = new_session()
