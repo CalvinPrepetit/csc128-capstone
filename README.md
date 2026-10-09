@@ -116,7 +116,13 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 90 no-key tests passed. Clear symptom follow-ups can
+Verification checkpoint: 94 no-key tests passed. The reported oil-change/headlights
+conversation, including a Friday-to-Monday correction, completes with 1 simulated
+AI call for intake; subsequent simple scheduling, identity and consent are local.
+Weekday-only corrections clear the time and require a new reviewed selection.
+All explicit part-service clauses are retained alongside the model-written note.
+Model instructions were shortened by about 60% in characters to reduce input use.
+Clear symptom follow-ups can
 be collected locally and sent together for an AI-written note, reducing calls.
 The targeted no-start flow needs 2 AI calls instead of 4. Clear name/year/make/model
 entries and 'yes it does' are local; ambiguous replies still use the model.

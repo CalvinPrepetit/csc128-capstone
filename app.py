@@ -59,7 +59,11 @@ def main():
     options = (("Describe a vehicle concern", "triage"), ("Schedule an appointment", "appointment"),
                ("Create a service ticket", "ticket"), ("Review technician summary", "summary"),
                ("Show available times", "openings"), ("Contact a service advisor", "human"))
-    if len(session["messages"]) == 1:
+    if session["stage"] == "routed":
+        options = options[1:4]
+        st.caption("Choose your next step, or type a day and time to schedule.")
+        menu = st.container()
+    elif len(session["messages"]) == 1:
         st.subheader("How can I help?")
         menu = st.container()
     else:

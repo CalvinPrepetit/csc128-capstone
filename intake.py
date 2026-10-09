@@ -109,6 +109,19 @@ def ac_request(text):
             and not matches(r"\b(?:not|don t|dont|cancel|no longer)\b", text))
 
 
+def requested_parts(text):
+    """Retain explicit part-service clauses when the model extracts only one job."""
+    parts = []
+    for clause in re.split(r"\band\b|[.;]", normalize(text)):
+        if matches(r"\b(?:not|don t|dont|cancel|no longer)\b", clause):
+            continue
+        match = re.search(r"\bneeds?\s+(?:my |the |a |an )?([a-z]+(?: [a-z]+){0,2}?)\s+(replaced|changed|checked)\b", clause)
+        if match and not matches(r"\b(?:tires?|to|be|it|this|that)\b", match[1]):
+            action = {"replaced": "replacement", "changed": "replacement", "checked": "inspection"}[match[2]]
+            parts.append(match[1] + " " + action)
+    return list(dict.fromkeys(parts))
+
+
 def suspected_location(text):
     """A short questioned location is an observation, not a confirmed fault."""
     match = re.match(r"\s*(?:the\s+)?(tires?|wheels?|engine|(?:front|back|rear)(?:\s+(?:left|right))?|(?:ac\s+)?vents?)\s*\?", text, re.I)

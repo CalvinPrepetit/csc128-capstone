@@ -13,7 +13,7 @@ from tools import (find_openings, normalize_day, normalize_time, save_record,
                    validate_fields, slot_evidence, visit_selection)
 from intake import (normalize, boundary, requested_intent, requested_work,
                     routine_service, policy_topic, preserve_observations, moving_stall, stalling_note,
-                    readable_fallback, tire_request, suspected_location, ac_request)
+                    readable_fallback, tire_request, suspected_location, ac_request, requested_parts)
 
 GREETING = ("Welcome! I'm your Auto Shop Service Advisor.\n\n"
             "In your own words, describe what's going on with your vehicle. "
@@ -78,10 +78,11 @@ def clear_agreement(text):
     """Common unambiguous replies need no API call; mixed replies still get interpreted."""
     if consent_conflict(text):
         return False
+    clean = re.sub(r"\b(?:pelas e|pleas e|pelase|pleae|plesae)\b", "please", normalize(text))
     return bool(re.fullmatch(
         r"(?:(?:great|okay|ok|perfect|thanks) )?"
-        r"(?:yes|y|yep|yup|yeah|yea|confirm|correct|looks good|works for me|that works|go ahead(?: and (?:save|book) it)?|yes that s correct|yes thats correct)"
-        r"(?: (?:please|thanks|thank you|thankyou|that s correct|thats correct|that looks (?:fine|good)|that works|looks fine|it does|it is|it looks good))*", normalize(text)))
+        r"(?:yes|y|yep|yup|yeah|yea|confirm|correct|seems correct|that seems correct|looks good|works for me|that works|go ahead(?: and (?:save|book) it)?|yes that s correct|yes thats correct)"
+        r"(?: (?:please|thanks|thank you|thankyou|that s correct|thats correct|that looks (?:fine|good)|that works|looks fine|it does|it is|it looks good))*", clean))
 
 def uncertain_reply(text):
     return bool(re.fullmatch(
@@ -209,6 +210,8 @@ def apply_updates(result, text, session):
         if not isinstance(item, dict) or set(item) != {"value", "evidence"}:
             raise ValueError("Invalid extraction")
         value, evidence = item["value"], item["evidence"]
+        if key == "time" and "day" in parsed and not re.search(r"\d|\b(?:noon|midday)\b", text, re.I):
+            continue  # A model-suggested time must not block a valid weekday-only change.
         if key == "expected_work" and (not isinstance(evidence, str) or evidence not in text or not isinstance(value, str) or value.casefold() not in evidence.casefold()):
             # Optional work must be explicitly requested; retain original symptoms instead.
             continue
@@ -256,6 +259,11 @@ def apply_updates(result, text, session):
     if "day" in parsed and parsed["day"] != session["fields"]["day"] and "time" not in parsed:
         parsed["time"] = ""
     session["fields"].update(parsed)
+    parts = requested_parts(text)
+    for part in parts:
+        work = session["fields"]["expected_work"]
+        if part not in normalize(work):
+            session["fields"]["expected_work"] = (work + "; " if work else "") + part
     if result["summary"] and result["has_issue"]:
         session["fields"]["summary"] = result["summary"]
     if result["has_issue"] or first_concern:
@@ -291,6 +299,7 @@ def apply_updates(result, text, session):
         session["departments_confirmed"] = False
     if session.get("reported_vent_source") and "vent" not in session["fields"]["summary"].lower():
         session["fields"]["summary"] += " Customer reports a possible AC-vent source; location is uncertain."
+    session.setdefault("requested_parts", []).extend(p for p in parts if p not in session.get("requested_parts", []))
 
 def confirm(session):
     if session["stage"] == "departments":
@@ -534,6 +543,9 @@ def handle(text, session, client_factory, control=None):
             candidate["ac_detail_collected"] = True
         if result["has_issue"]:
             preserve_observations(candidate, model_text, session["last_question"] if symptom_answer else "", result["details"])
+        for part in candidate.get("requested_parts", []):
+            if part not in normalize(candidate["fields"]["summary"]):
+                candidate["fields"]["summary"] += " Customer requests " + part + "."
         candidate.pop("queued_observations", None)
     except ValueError as error:
         invalidate(session)

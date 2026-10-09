@@ -42,6 +42,60 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_reported_oil_headlights_booking_and_day_correction_need_one_ai_call(self):
+        s = new_session()
+        client = client_for(output(intent="triage", has_issue=True, departments=["electrical", "maintenance"],
+            updates={"expected_work": {"value": "oil change", "evidence": "oil change"}}))
+        factory = Mock(return_value=client)
+        reply = process_turn("My car needs an oil change and it needs the headlights replaced", s, factory)
+        self.assertIn("oil change", reply)
+        self.assertIn("headlights replacement", reply)
+        self.assertIn("headlights replacement", s["fields"]["expected_work"])
+        process_turn("seems correct", s, factory)
+        process_turn("Yes pelas e", s, factory)
+        process_turn("yes please", s, factory)
+        self.assertIn("For Thursday", process_turn("yes for thursday if possible", s, factory))
+        self.assertIn("For Friday", process_turn("yes please for Friday if possible", s, factory))
+        process_turn("9am is fine", s, factory)
+        process_turn("Jeff 1999 honda civic", s, factory)
+        old_id = s["pending"]["confirmation_id"]
+        for phrase in ("actually can I do monday ?", "what? can i do monday", "i want to do monday instead"):
+            reply = process_turn(phrase, s, factory)
+            self.assertIn("For Monday", reply)
+            self.assertEqual(s["fields"]["time"], "")
+            self.assertIsNone(s["pending"])
+        process_turn("11am", s, factory)
+        self.assertNotEqual(s["pending"]["confirmation_id"], old_id)
+        self.assertIn("Saved demo appointment", process_turn("yes", s, factory))
+        self.assertEqual(s["records"][0]["day"], "Monday")
+        self.assertIn("headlights", s["records"][0]["expected_work"])
+        factory.assert_called_once()
+
+    def test_local_day_correction_works_during_provider_cooldown(self):
+        s = filled()
+        s["retry_until"] = 9999999999
+        factory = Mock(side_effect=AssertionError("Must not contact provider"))
+        reply = process_turn("actually can I do Monday?", s, factory)
+        self.assertIn("For Monday", reply)
+        self.assertEqual(s["fields"]["time"], "")
+        self.assertEqual(s["records"], [])
+        factory.assert_not_called()
+
+    def test_model_cannot_add_a_time_to_weekday_only_correction(self):
+        s = filled()
+        reply = send(s, "Would Monday be an option for me instead?", intent="appointment", action="revise",
+                     updates={"day": {"value": "Monday", "evidence": "Monday"},
+                              "time": {"value": "11:00 AM", "evidence": "11:00 AM"}})
+        self.assertIn("For Monday", reply)
+        self.assertEqual(s["fields"]["day"], "Monday")
+        self.assertEqual(s["fields"]["time"], "")
+        self.assertIsNone(s["pending"])
+
+    def test_local_schedule_parser_rejects_mixed_or_conditional_requests(self):
+        from tools import visit_selection
+        for text in ("Monday or Friday", "Friday if my wife agrees", "not Monday", "Monday and replace brakes", "it started Monday"):
+            self.assertIsNone(visit_selection(text, find_openings([]), "Friday"), text)
+
     def test_mixed_tire_and_ac_request_keeps_both_and_asks_relevant_question(self):
         s = new_session()
         reply = send(s, "i need my tires changed and my ac looked at", has_issue=True,

@@ -67,8 +67,14 @@ def find_openings(records):
 
 def visit_selection(text, openings, current_day=""):
     """Resolve simple displayed choices locally; mixed requests remain with AI."""
+    # Remove conversational filler only. Unknown words, multiple days, and
+    # conditions other than availability still fail the full-match below.
+    text = re.sub(r"\bif (?:possible|available)\b", "", text, flags=re.I)
+    text = re.sub(r"\b(?:actually|what|yes|please|can|could|would|i|we|you|want|like|to|do|for|instead|change|it|my|appointment|visit)\b",
+                  "", text, flags=re.I)
+    text = " ".join(text.strip(" ?!.,").split())
     match = re.fullmatch(
-        r"\s*(?:(?:can i come in|book|schedule|choose)\s+)?"
+        r"\s*(?:(?:come in|book|schedule|choose)\s+)?"
         r"(monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
         r"(?:\s+(?:at\s+)?(\d{1,4}(?::[0-5]\d)?\s*(?:[ap]m?)?))?"
         r"(?:\s+(?:then|please|is fine|works(?: fine)?|works for me))?[.!?]*\s*",
