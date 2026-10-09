@@ -116,7 +116,10 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 94 no-key tests passed. The reported oil-change/headlights
+Verification checkpoint: 95 no-key tests passed. Clear clicking and lighting
+observations survive incomplete model notes; unknown placeholders are excluded.
+Scheduling typos and common price/warranty questions resolve locally, including
+after a save. The reported oil-change/headlights
 conversation, including a Friday-to-Monday correction, completes with 1 simulated
 AI call for intake; subsequent simple scheduling, identity and consent are local.
 Weekday-only corrections clear the time and require a new reviewed selection.

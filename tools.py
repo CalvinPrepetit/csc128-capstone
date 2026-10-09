@@ -70,7 +70,7 @@ def visit_selection(text, openings, current_day=""):
     # Remove conversational filler only. Unknown words, multiple days, and
     # conditions other than availability still fail the full-match below.
     text = re.sub(r"\bif (?:possible|available)\b", "", text, flags=re.I)
-    text = re.sub(r"\b(?:actually|what|yes|please|can|could|would|i|we|you|want|like|to|do|for|instead|change|it|my|appointment|visit)\b",
+    text = re.sub(r"\b(?:actually|what|yes|please|can|could|would|i|we|you|want|need|like|to|do|for|instead|change|it|my|appointment|visit)\b",
                   "", text, flags=re.I)
     text = " ".join(text.strip(" ?!.,").split())
     match = re.fullmatch(

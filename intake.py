@@ -10,7 +10,8 @@ def detail_words(text):
 
 
 def normalize(text):
-    return " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
+    clean = " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
+    return re.sub(r"\b(?:appoitnment|appoitment|appointmet)\b", "appointment", clean)
 
 
 def matches(pattern, text):
@@ -32,10 +33,10 @@ def boundary(text):
         if not re.search(r"\b(?:no|not|without)(?: smoke (?:or|and))?\s*$", prefix):
             return "unsafe"
     rules = {
-        "warranty": r"\bwarranty\b.*\b(?:cover|coverage|pay|approve|guarantee|claim)\b|\b(?:cover|coverage|approve|guarantee)\b.*\bwarranty\b",
+        "warranty": r"\bwarranty\b.*\b(?:cover|coverage|pay|approve|guarantee|claim)\b|\b(?:cover|coverage|approve|guarantee|what about)\b.*\bwarranty\b",
         "insurance": r"\binsurance claim\b|\binsurer\b.*\b(?:approve|pay|file|decide)\b",
         "recall": r"\brecalls?\b.*\b(?:look|check|active|open)\b|\b(?:look up|check|active|open)\b.*\brecalls?\b",
-        "price": r"\bexact\b.*\b(?:price|cost|total|quote)\b|\bguarantee\b.*\b(?:price|cost|quote)\b",
+        "price": r"\b(?:how much|what s|whats|what is|exact|guarantee)\b.*\b(?:price|cost|total|quote)\b|\bhow much\b.*\b(?:charge|pay)\b",
         "diagnosis": r"\b(?:exactly|definitely|certainly)\b.*\b(?:part|broken|wrong|cause)\b|\bdiagnose\b",
     }
     return next((name for name, pattern in rules.items() if matches(pattern, text)), "")
@@ -151,11 +152,22 @@ def starting_observations(text):
     facts = {}
     if matches(r"\bcranks?\b", text) and matches(r"\b(?:won t|wont|will not|doesn t|doesnt) start\b", text):
         facts["starting"] = "Vehicle cranks but does not consistently start"
+    elif matches(r"\b(?:won t|wont|will not|doesn t|doesnt) (?:start|turn on)\b", text):
+        facts["starting"] = "Customer reports the vehicle will not start"
+    if matches(r"\b(?:clicks?|clicking|clickin)\b", text):
+        if matches(r"\b(?:no|not|never|isn t|isnt) (?:any )?click(?:s|ing|in)?\b|\b(?:doesn t|doesnt|stopped) click", text):
+            facts["starting sound"] = "Customer reports no clicking sound"
+        else:
+            facts["starting sound"] = "Customer reports repeated clicking" if matches(r"clicks and clicks|repeated", text) else "Customer reports a clicking sound"
     if matches(r"\bable to get it (?:goin|going|running).{0,15}\b(?:little|briefly)\b|\b(?:starts? briefly|briefly starts?)\b", text):
         facts["brief start"] = "The vehicle briefly starts"
     if matches(r"\b(?:won t|wont|will not|doesn t|doesnt) (?:stay|remain|run).{0,12}\bidle\b", text):
         facts["idle"] = "When running, the vehicle will not stay running at idle"
-    if matches(r"\blights?\b.{0,20}\bdim\b|\bdim\b.{0,10}\blights?\b", text):
+    if matches(r"\blights?\b.{0,20}\b(?:don t|dont|do not|won t|wont) (?:turn on|illuminate)\b", text):
+        facts["lighting"] = "Customer reports the lights do not turn on"
+    elif matches(r"\blights?\b.{0,20}\b(?:seem|look|are|work) (?:fine|normal|normally)\b", text):
+        facts["lighting"] = "Customer reports the lights appear normal"
+    elif matches(r"\blights?\b.{0,20}\bdim\b|\bdim\b.{0,10}\blights?\b", text):
         facts["lighting"] = "Customer reports dim lights"
     elif matches(r"\b(?:all (?:of )?(?:the )?)?lights?\b.{0,20}\b(?:are on|still on|stayed on|remain on|remaining on|illuminate)\b", text):
         facts["lighting"] = "Customer reports the lights illuminate"
@@ -188,7 +200,7 @@ def preserve_observations(session, text, question="", details=None):
     for topic, item in (details or {}).items():
         if item is None:
             continue
-        if (isinstance(item, dict) and not item.get("evidence")
+        if (isinstance(item, dict)
                 and normalize(str(item.get("value", ""))) in {"", "unknown", "not specified"}):
             continue  # An absent detail is not evidence of an observation.
         if (not isinstance(item, dict) or set(item) != {"value", "evidence"}
@@ -263,13 +275,14 @@ def preserve_observations(session, text, question="", details=None):
     if onset_note and normalize(onset_note) not in normalize(note):
         note += " " + onset_note
     for key, answer in observations.items():
-        if clean_details.get("concern") and key not in {"starting", "brief start", "idle", "lighting", "stalling sequence", "warning lights", "smoke"}:
+        if clean_details.get("concern") and key not in {"starting", "starting sound", "brief start", "idle", "lighting", "stalling sequence", "warning lights", "smoke"}:
             continue  # Structured topics replace raw-answer appendices, not factual safeguards.
         if key == "onset" and answer.startswith("First noticed"):
             if normalize(answer) not in normalize(note):
                 note += " " + answer + "."
             continue
-        patterns = {"starting": r"\bcranks?\b.*\b(?:does not|won t|wont|not)\b.*\bstart\b",
+        patterns = {"starting": r"\b(?:does not|won t|wont|not)\b.*\b(?:start|turn on)\b",
+                    "starting sound": r"\bclick(?:s|ing|in)?\b",
                     "brief start": r"\b(?:briefly starts?|starts? briefly)\b",
                     "idle": r"\b(?:won t|wont|not|does not)\b.*\bidle\b",
                     "lighting": r"\blights?\b.*\b(?:on|illuminate|illuminated)\b"}
@@ -294,4 +307,9 @@ def preserve_observations(session, text, question="", details=None):
             note += f" Customer observation ({label}): {answer.rstrip('.')}."
     if session.get("ac_inspection_requested") and not matches(r"\b(?:ac|a c|air conditioning)\b", note):
         note += " Customer also requests an air-conditioning inspection; no specific AC fault is assumed."
-    session["fields"]["summary"] = note
+    note = re.sub(r"\bunknown\s*\.", "", note, flags=re.I).strip()
+    note = re.sub(r"^(?:car|vehicle)\s", "Customer reports the vehicle ", note, flags=re.I)
+    session["fields"]["summary"] = note[:1].upper() + note[1:]
+    if "starting" in observations and "electrical" not in session["fields"]["departments"]:
+        session["fields"]["departments"].append("electrical")
+        session["departments_confirmed"] = False

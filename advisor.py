@@ -383,6 +383,10 @@ def handle(text, session, client_factory, control=None):
                 "It is not a diagnosis, ticket, or appointment. Your current intake is unchanged. "
                 "Say 'show my technician summary' if you would like to review yours.")
     if not session["last_saved"] and session["fields"]["summary"] and not answering_issue:
+        if re.fullmatch(r"(?:(?:i )?(?:want to |would like to |need to )?)?(?:book|schedule|reserve) (?:an? |my )?appointment(?: please)?", clean):
+            invalidate(session)
+            session["intent"] = "appointment"
+            return advance(session)
         if clean in {"when can i come in", "when can i come in please", "show available times"}:
             invalidate(session)
             session["intent"] = "appointment"
@@ -406,7 +410,7 @@ def handle(text, session, client_factory, control=None):
         invalidate(session)
     if (session["stage"] == "collect" and session["departments_confirmed"]
             and session["intent"] in {"appointment", "ticket"}):
-        identity = re.fullmatch(r"([A-Za-z][A-Za-z .'-]{0,60}?)\s+((?:19|20)\d{2}\s+[A-Za-z][A-Za-z0-9 .'-]{1,100})", text.strip())
+        identity = re.fullmatch(r"([A-Za-z][A-Za-z .'-]{0,60}?)\s*,?\s+((?:19|20)\d{2}\s+[A-Za-z][A-Za-z0-9 .'-]{1,100})", text.strip())
         if identity:
             invalidate(session)
             session["fields"].update(customer_name=identity[1].strip(), vehicle=identity[2].strip())
@@ -415,7 +419,7 @@ def handle(text, session, client_factory, control=None):
     onset = re.fullmatch(r"(?:this|today this|last) (?:morning|mornin|evening|week|month)|today|yesterday|\d+ days? ago", clean)
     simple_detail = onset or re.search(r"\b(?:clicks?|clicking|clickin|cranks?|lights?|dashboard)\b", clean)
     if (answering_issue and simple_detail and len(text) < 200 and not requested_intent(text)
-            and not consent_conflict(text) and not policy_topic(text, "")):
+            and "?" not in text and not re.search(r"\b(?:actually|instead|correction|change|cancel|book|schedule|appointment)\b", clean)):
         candidate = deepcopy(session)
         candidate.setdefault("issue_messages", []).append(text)
         if onset:

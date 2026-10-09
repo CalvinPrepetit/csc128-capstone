@@ -42,6 +42,42 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_empty_model_notes_cannot_drop_clicking_and_normal_lights(self):
+        s = new_session()
+        text = "ok my car will not turn on i have no idea what to do"
+        send(s, text, has_issue=True, details={
+            "concern": {"value": "car will not turn on", "evidence": text},
+            "onset": {"value": "unknown", "evidence": text}})
+        self.assertIn("first notice", s["last_question"])
+        factory = Mock(side_effect=AssertionError("This clear observation should be local"))
+        process_turn("It just clicks and clicks but nothing", s, factory)
+        reply = send(s, "yes the lights seem fine", has_issue=True, departments=["electrical"], details={
+            "concern": {"value": "car will not turn on.", "evidence": text},
+            "onset": {"value": "unknown.", "evidence": "unknown."}})
+        self.assertIn("clicking", reply)
+        self.assertIn("lights appear normal", reply)
+        self.assertNotIn("unknown.", reply)
+        reply = send(s, "well i think the clicking is important ot mention", has_issue=True,
+                     summary="car will not turn on. unknown.")
+        self.assertIn("clicking", reply)
+        self.assertIn("lights appear normal", reply)
+        process_turn("yes", s, factory)
+        self.assertIn("Available demo", process_turn("i want to schedule an appoitnment", s, factory))
+        self.assertIn("For Friday", process_turn("yes i need to come in friday", s, factory))
+        process_turn("9am is fine", s, factory)
+        reply = process_turn("calvin , 2025 chevy silverado", s, factory)
+        self.assertIn("appointment request", reply)
+        self.assertIn("clicking", reply)
+        process_turn("actually can i do monday", s, factory)
+        process_turn("11am is fine", s, factory)
+        process_turn("yes", s, factory)
+        saved = deepcopy(s["records"])
+        for question in ("how much will this cost", "how much will this cost though", "whats the price of it"):
+            self.assertIn("cannot give an exact repair price", process_turn(question, s, factory))
+        self.assertIn("cannot decide warranty", process_turn("what about my warranty", s, factory))
+        self.assertEqual(s["records"], saved)
+        factory.assert_not_called()
+
     def test_reported_oil_headlights_booking_and_day_correction_need_one_ai_call(self):
         s = new_session()
         client = client_for(output(intent="triage", has_issue=True, departments=["electrical", "maintenance"],
