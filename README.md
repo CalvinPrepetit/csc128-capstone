@@ -2,6 +2,10 @@
 
 Calvin A. Prepetit - CSC-128 Capstone
 
+Local course folder: `csc128/csc128-capstone`. This folder is its own Git repository;
+the public repository is `CalvinPrepetit/csc128-capstone`, with `app.py` at its root.
+Streamlit uses branch `main`, entry point `app.py`; the local move does not change deployment.
+
 [Open the app](https://calvinprepetit-auto-shop.streamlit.app/)
 
 I continued the auto shop theme from my earlier assignments. A customer can
