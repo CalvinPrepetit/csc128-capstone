@@ -205,7 +205,7 @@ def onset_observation(text):
     return ""
 
 
-def preserve_observations(session, text, question="", details=None):
+def preserve_observations(session, text, question="", details=None, polished_note=""):
     """Keep the latest answer per topic so revisions cannot silently erase observations."""
     clean_details = session.setdefault("intake_details", {})
     for topic, item in (details or {}).items():
@@ -273,8 +273,8 @@ def preserve_observations(session, text, question="", details=None):
             and not matches(r"\b(?:slow|slowly|low speed)\b", clean_details["conditions"])):
         clean_details["conditions"] += " Customer also reports the concern at low speed."
     if clean_details.get("concern"):
-        # Join AI-written observations once; short follow-ups cannot erase earlier topics.
-        note = ""
+        # Keep the AI's readable note; append verified observations it omitted.
+        note = polished_note.strip()
         for answer in clean_details.values():
             words = detail_words(answer)
             if not words <= set(normalize(note).split()):

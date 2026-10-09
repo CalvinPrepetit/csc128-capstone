@@ -613,7 +613,8 @@ def handle(text, session, client_factory, control=None):
         if symptom_answer and "about the AC" in session["last_question"]:
             candidate["ac_detail_collected"] = True
         if result["has_issue"]:
-            preserve_observations(candidate, model_text, session["last_question"] if symptom_answer else "", result["details"])
+            preserve_observations(candidate, model_text, session["last_question"] if symptom_answer else "",
+                                  result["details"], result["summary"])
         for part in candidate.get("requested_parts", []):
             if part not in normalize(candidate["fields"]["summary"]):
                 candidate["fields"]["summary"] += " Customer requests " + part + "."

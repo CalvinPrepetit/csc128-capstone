@@ -42,6 +42,17 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_polished_model_note_is_not_replaced_with_fragments(self):
+        s = new_session()
+        note = "Customer reports an unusual noise from the muffler while driving, first noticed last week."
+        send(s, "Noise from muffler while driving last week", has_issue=True, summary=note,
+             departments=["drivability"], details={
+                 "concern": {"value": "noise", "evidence": "Noise"},
+                 "location": {"value": "muffler", "evidence": "muffler"},
+                 "conditions": {"value": "while driving", "evidence": "while driving"},
+                 "onset": {"value": "last week", "evidence": "last week"}})
+        self.assertEqual(s["fields"]["summary"], note)
+
     def test_failure_log_records_type_without_secret_error_message(self):
         s = new_session()
         factory = Mock(side_effect=APIConnectionError(request=httpx.Request("POST", "https://example.invalid")))
