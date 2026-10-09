@@ -42,6 +42,16 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_absent_optional_observations_do_not_block_valid_intake(self):
+        data = output(has_issue=True, departments=["drivability"], questions=[],
+                      summary="Customer reports muffler rattling while driving, first noticed last week.")
+        data.pop("details")
+        s = new_session()
+        reply = process_turn("Muffler rattles while driving since last week", s, lambda: client_for(data))
+        self.assertEqual(s["stage"], "departments")
+        self.assertIn("muffler rattling", reply)
+        self.assertEqual(s["records"], [])
+
     def test_planned_followups_use_two_calls_then_book_locally(self):
         s = new_session()
         client = client_for(output())
