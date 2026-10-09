@@ -2,7 +2,8 @@
 import re
 
 NOTE_FILLER = {"customer", "reports", "reported", "vehicle", "occurs", "when",
-               "the", "a", "an", "is", "at", "of", "first", "noticed"}
+               "the", "a", "an", "is", "at", "of", "first", "noticed",
+               "i", "my", "there", "it", "its", "s", "am", "im"}
 
 
 def detail_words(text):

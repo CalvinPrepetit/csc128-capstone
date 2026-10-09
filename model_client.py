@@ -2,6 +2,7 @@
 Calvin A. Prepetit
 """
 import json
+from groq import BadRequestError
 from knowledge import DEPARTMENTS
 
 MODEL = "openai/gpt-oss-20b"
@@ -113,11 +114,18 @@ def interpret(text, session, client):
                "pending": ({"kind": session["pending"]["kind"], "fields": session["pending"]["fields"]} if session["pending"] else None),
                "openings": session.get("openings", []),
                "department_guide": DEPARTMENTS}
-    response = client.chat.completions.create(
-        model=MODEL, temperature=0, reasoning_effort="low", max_completion_tokens=1500,
-        response_format={"type": "json_schema", "json_schema": {"name": "intake", "strict": True, "schema": SCHEMA}},
-        messages=[{"role": "system", "content": PROMPT},
-        {"role": "user", "content": json.dumps(context)}])
+    request = dict(model=MODEL, temperature=0, reasoning_effort="low", max_completion_tokens=1500,
+                   response_format={"type": "json_schema", "json_schema": {"name": "intake", "strict": True, "schema": SCHEMA}},
+                   messages=[{"role": "system", "content": PROMPT},
+                             {"role": "user", "content": json.dumps(context)}])
+    try:
+        response = client.chat.completions.create(**request)
+    except BadRequestError:
+        # One alternate-format attempt; all interpretation/write checks still apply.
+        session["tool_log"].append({"tool": "interpret_format_fallback", "status": 400})
+        request["response_format"] = {"type": "json_object"}
+        request["messages"][0]["content"] += "\nRequired JSON schema: " + json.dumps(SCHEMA)
+        response = client.chat.completions.create(**request)
     value = json.loads(response.choices[0].message.content or "")
     session["tool_log"].append({"tool": "interpret", "proposed": value})
     if isinstance(value, dict):

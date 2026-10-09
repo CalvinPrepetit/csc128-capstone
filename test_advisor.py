@@ -8,7 +8,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import httpx
-from groq import RateLimitError, APIConnectionError
+from groq import RateLimitError, APIConnectionError, BadRequestError
 from streamlit.testing.v1 import AppTest
 from advisor import new_session, process_turn, advance, prepare_preview, openings_text
 from knowledge import Retriever, policy_answer
@@ -42,6 +42,27 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_bad_request_uses_one_validated_json_format_fallback(self):
+        s = new_session()
+        send(s, "i need my tires changed")
+        data = output(intent="appointment", action="question", routing_agreement=True)
+        client = client_for(data)
+        request = httpx.Request("POST", "https://example.invalid")
+        error = BadRequestError("format rejected", response=httpx.Response(400, request=request), body={})
+        response = client.chat.completions.create.return_value
+        client.chat.completions.create.side_effect = [error, response]
+        reply = process_turn("yes when can icome in", s, lambda: client)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertEqual(client.chat.completions.create.call_args.kwargs["response_format"], {"type": "json_object"})
+        self.assertIn("Available demo intake times", reply)
+        self.assertEqual(s["records"], [])
+        client.chat.completions.create.reset_mock()
+        client.chat.completions.create.side_effect = error
+        s = new_session()
+        process_turn("My car has a noise", s, lambda: client)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertEqual(s["records"], [])
+
     def test_polished_model_note_is_not_replaced_with_fragments(self):
         s = new_session()
         note = "Customer reports an unusual noise from the muffler while driving, first noticed last week."
@@ -51,6 +72,14 @@ class ConversationTests(unittest.TestCase):
                  "location": {"value": "muffler", "evidence": "muffler"},
                  "conditions": {"value": "while driving", "evidence": "while driving"},
                  "onset": {"value": "last week", "evidence": "last week"}})
+        self.assertEqual(s["fields"]["summary"], note)
+
+    def test_customer_pronouns_do_not_duplicate_polished_note(self):
+        s = new_session()
+        text = "There is a weird noise coming from my muffler."
+        note = "Customer reports a weird noise coming from the muffler."
+        send(s, text, has_issue=True, summary=note, departments=["drivability"],
+             details={"concern": {"value": text, "evidence": text}})
         self.assertEqual(s["fields"]["summary"], note)
 
     def test_failure_log_records_type_without_secret_error_message(self):
