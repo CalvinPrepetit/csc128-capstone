@@ -97,8 +97,16 @@ def tire_request(text):
     """Recognize explicit replacement wording, not a tire symptom alone."""
     if matches(r"\b(?:not|don t|dont|cancel|no longer)\b", text):
         return ""
-    match = re.search(r"\btires?\s+need\s+(?:to\s+be\s+)?(?:changed|replaced)\b", text, re.I)
+    match = re.search(r"\btires?\s+need\s+(?:to\s+be\s+)?(?:changed|replaced)\b|"
+                      r"\b(?:need|want)\s+(?:my |the )?tires?\s+(?:changed|chaned|replaced)\b", text, re.I)
     return match.group() if match else ""
+
+
+def ac_request(text):
+    """An explicit inspection request is not evidence of an AC fault."""
+    return (matches(r"\b(?:ac|a c|air conditioning)\b", text)
+            and matches(r"\b(?:looked at|looks? at|checked|check|inspect|inspection)\b", text)
+            and not matches(r"\b(?:not|don t|dont|cancel|no longer)\b", text))
 
 
 def suspected_location(text):
@@ -209,7 +217,7 @@ def preserve_observations(session, text, question="", details=None):
         if not matches(r"\b(?:mph|kph|km h|kmh|miles per hour|kilometers per hour)\b", source):
             note = re.sub(r"\s*\b(?:mph|kph|km/h|kmh|miles per hour|kilometers per hour)\b", "", note, flags=re.I)
         work = session["fields"]["expected_work"]
-        if work == "Customer-requested tire replacement" and not matches(r"\btires?\b.*\b(?:replacement|replace|replaced|change|changed)\b", note):
+        if "Customer-requested tire replacement" in work and not matches(r"\btires?\b.*\b(?:replacement|replace|replaced|change|changed)\b", note):
             note += " Customer requests tire replacement; inspection is needed before any repair decision."
         session["fields"]["summary"] = note
     observations = session.setdefault("observations", {})
@@ -238,6 +246,9 @@ def preserve_observations(session, text, question="", details=None):
         elif matches(r"\b(?:actually|now|correction)\b", text) and topic in normalize(text):
             observations.pop(topic, None)
     note = session["fields"]["summary"]
+    onset_note = clean_details.get("onset", "")
+    if onset_note and normalize(onset_note) not in normalize(note):
+        note += " " + onset_note
     for key, answer in observations.items():
         if clean_details.get("concern") and key not in {"starting", "brief start", "idle", "lighting", "stalling sequence", "warning lights", "smoke"}:
             continue  # Structured topics replace raw-answer appendices, not factual safeguards.
@@ -268,4 +279,6 @@ def preserve_observations(session, text, question="", details=None):
         if normalize(answer) not in normalize(note):
             label = "first noticed" if key == "onset" else key.rstrip(" ?")
             note += f" Customer observation ({label}): {answer.rstrip('.')}."
+    if session.get("ac_inspection_requested") and not matches(r"\b(?:ac|a c|air conditioning)\b", note):
+        note += " Customer also requests an air-conditioning inspection; no specific AC fault is assumed."
     session["fields"]["summary"] = note

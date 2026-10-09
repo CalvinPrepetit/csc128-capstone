@@ -13,7 +13,7 @@ from tools import (find_openings, normalize_day, normalize_time, save_record,
                    validate_fields, slot_evidence, visit_selection)
 from intake import (normalize, boundary, requested_intent, requested_work,
                     routine_service, policy_topic, preserve_observations, moving_stall, stalling_note,
-                    readable_fallback, tire_request, suspected_location)
+                    readable_fallback, tire_request, suspected_location, ac_request)
 
 GREETING = ("Welcome! I'm your Auto Shop Service Advisor.\n\n"
             "In your own words, describe what's going on with your vehicle. "
@@ -81,7 +81,7 @@ def clear_agreement(text):
     return bool(re.fullmatch(
         r"(?:(?:great|okay|ok|perfect|thanks) )?"
         r"(?:yes|y|yep|yup|yeah|yea|confirm|correct|looks good|works for me|that works|go ahead(?: and (?:save|book) it)?|yes that s correct|yes thats correct)"
-        r"(?: (?:please|thanks|thank you|thankyou|that s correct|thats correct|that looks (?:fine|good)|that works|looks fine))*", normalize(text)))
+        r"(?: (?:please|thanks|thank you|thankyou|that s correct|thats correct|that looks (?:fine|good)|that works|looks fine|it does|it is|it looks good))*", normalize(text)))
 
 def uncertain_reply(text):
     return bool(re.fullmatch(
@@ -92,6 +92,8 @@ def uncertain_reply(text):
 def intake_question(session, proposed):
     """Keep common missing observations from being skipped by an empty model question."""
     details = normalize(session["fields"]["summary"] + " " + " ".join(session.get("issue_messages", [])))
+    if session.get("ac_inspection_requested") and not session.get("ac_detail_collected"):
+        return "What would you like the technician to check about the AC?"
     if "restarted before shutting off again" in details and "lights remained on" in details:
         return ""  # This customer's stalling sequence already supplies useful observations.
     known = session.get("intake_details", {})
@@ -264,8 +266,10 @@ def apply_updates(result, text, session):
             session["fields"]["summary"] = (f"Customer requests {work}." if work
                                              else stalling_note(text) or readable_fallback(text) or "Customer reports: " + text)
         departments = list(dict.fromkeys(result["departments"] or old_departments))
+        if "Customer-requested tire replacement" in session["fields"]["expected_work"] and "maintenance" not in departments:
+            departments.append("maintenance")
         concern = normalize(text + " " + " ".join(session.get("issue_messages", [])))
-        if (session["fields"]["expected_work"] == "Customer-requested tire replacement"
+        if ("Customer-requested tire replacement" in session["fields"]["expected_work"]
                 and re.search(r"\b(?:noise|shaking|vibration|grinding|bumping)\b", concern)
                 and "drivability" not in departments):
             departments.append("drivability")  # Requested tire work must not hide the reported fault.
@@ -336,7 +340,10 @@ def handle(text, session, client_factory, control=None):
     answering_issue = session["stage"] == "clarify" and not control
     if control == "confirm" or (not answering_issue and clear_agreement(text)):
         return confirm(session)
-    if control == "skip":
+    if control == "skip" or (answering_issue and uncertain_reply(text)):
+        if session.get("queued_observations"):
+            session["questions_asked"] = 3
+            return handle("No further symptom details are known.", session, client_factory, control="finish")
         return advance(session)
     if session["stage"] == "departments" and uncertain_reply(text):
         return ("You do not need to know the cause or choose a department yourself. "
@@ -345,8 +352,8 @@ def handle(text, session, client_factory, control=None):
                 " for the intake? Reply yes or choose Confirm departments. Nothing is booked yet.")
     if session["stage"] == "departments" and clean in {"sure", "sure why not", "sur why not", "sounds good", "that sounds good"}:
         return confirm(session)
-    if session["stage"] == "clarify" and uncertain_reply(text):
-        return advance(session)
+    if answering_issue and clean in {"what problem", "what do you mean", "i just need service"}:
+        return "You do not need to report a fault for requested service. " + session["last_question"] + " If unsure, choose Skip question."
     if clean in {"no", "no thanks"} and not answering_issue:
         invalidate(session)
         session["stage"] = "change"
@@ -388,10 +395,42 @@ def handle(text, session, client_factory, control=None):
                 else "This request is not saved. " + ("Your displayed preview is still waiting for confirmation." if session["pending"] else "Complete and review the details first."))
     if session["pending"] and consent_conflict(text) and "?" not in text:
         invalidate(session)
+    if (session["stage"] == "collect" and session["departments_confirmed"]
+            and session["intent"] in {"appointment", "ticket"}):
+        identity = re.fullmatch(r"([A-Za-z][A-Za-z .'-]{0,60}?)\s+((?:19|20)\d{2}\s+[A-Za-z][A-Za-z0-9 .'-]{1,100})", text.strip())
+        if identity:
+            invalidate(session)
+            session["fields"].update(customer_name=identity[1].strip(), vehicle=identity[2].strip())
+            return advance(session)
+    # Collect clearly recognizable observations without spending a call per reply.
+    onset = re.fullmatch(r"(?:this|today this|last) (?:morning|mornin|evening|week|month)|today|yesterday|\d+ days? ago", clean)
+    simple_detail = onset or re.search(r"\b(?:clicks?|clicking|clickin|cranks?|lights?|dashboard)\b", clean)
+    if (answering_issue and simple_detail and len(text) < 200 and not requested_intent(text)
+            and not consent_conflict(text) and not policy_topic(text, "")):
+        candidate = deepcopy(session)
+        candidate.setdefault("issue_messages", []).append(text)
+        if onset:
+            candidate.setdefault("intake_details", {})["onset"] = "First noticed " + clean + "."
+            if clean not in normalize(candidate["fields"]["summary"]):
+                candidate["fields"]["summary"] += " First noticed " + clean + "."
+        question = intake_question(candidate, "")
+        if question and question != session["last_question"] and candidate["questions_asked"] < 3:
+            candidate.setdefault("queued_observations", []).append(text)
+            candidate["questions_asked"] += 1
+            candidate["last_question"] = question
+            session.update(candidate)
+            return question + "\n\nIf you are unsure, say so or choose Skip question."
     remaining = math.ceil(session.get("retry_until", 0) - time.time())
     if remaining > 0:
         return rate_limit_message(remaining)
-    result = interpret(text, session, client_factory())
+    model_text = "\n".join(session.get("queued_observations", []) + [text])
+    result = interpret(model_text, session, client_factory())
+    if session.get("queued_observations"):
+        result["has_issue"] = True
+        result["updates"].pop("day", None)
+        result["updates"].pop("time", None)
+    if ac_request(text):
+        result["has_issue"] = True
     replacement = tire_request(text)
     routine = re.search(r"\b(?:oil change|tire rotation)\b", text, re.I)
     if (not replacement and routine and re.search(r"\b(?:needs?|wants?|please|requests?|book|schedule)\b", clean)
@@ -483,9 +522,19 @@ def handle(text, session, client_factory, control=None):
     candidate = deepcopy(session)
     invalidate(candidate)
     try:
-        apply_updates(result, text, candidate)
+        apply_updates(result, model_text, candidate)
+        if ac_request(text):
+            candidate["ac_inspection_requested"] = True
+            candidate["fields"]["departments"] = list(dict.fromkeys(candidate["fields"]["departments"] + ["interior"]))
+            work = candidate["fields"]["expected_work"]
+            if "AC inspection" not in work:
+                candidate["fields"]["expected_work"] = (work + "; " if work else "") + "AC inspection"
+            candidate["departments_confirmed"] = False
+        if symptom_answer and "about the AC" in session["last_question"]:
+            candidate["ac_detail_collected"] = True
         if result["has_issue"]:
-            preserve_observations(candidate, text, session["last_question"] if symptom_answer else "", result["details"])
+            preserve_observations(candidate, model_text, session["last_question"] if symptom_answer else "", result["details"])
+        candidate.pop("queued_observations", None)
     except ValueError as error:
         invalidate(session)
         session["tool_log"].append({"tool": "validate_updates", "error": str(error), "updates": result["updates"]})
@@ -497,10 +546,11 @@ def handle(text, session, client_factory, control=None):
     if candidate["intent"] == "ticket" and re.search(r"\b(?:unscheduled|without an? appointment|no appointment)\b", clean):
         candidate["fields"]["day"] = candidate["fields"]["time"] = ""
     session.update(candidate)
+    session.pop("queued_observations", None)
     if result["has_issue"] and not control:
         session.setdefault("issue_messages", []).append(text)
     clarification = result["clarification"].strip()
-    routine = routine_service(text)
+    routine = routine_service(text) and not (session.get("ac_inspection_requested") and not session.get("ac_detail_collected"))
     if result["has_issue"] and session["questions_asked"] == 0 and not routine and not session["departments_confirmed"]:
         clarification = intake_question(session, clarification)
     elif symptom_answer:

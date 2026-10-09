@@ -116,7 +116,15 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 85 no-key tests passed. Describing service work does not
+Verification checkpoint: 90 no-key tests passed. Clear symptom follow-ups can
+be collected locally and sent together for an AI-written note, reducing calls.
+The targeted no-start flow needs 2 AI calls instead of 4. Clear name/year/make/model
+entries and 'yes it does' are local; ambiguous replies still use the model.
+Mixed tire replacement and AC inspection retain both requests and ask what the
+technician should check about the AC, not when an unspecified fault started.
+Provider limits can still occur; timed retries and retained details remain.
+These latest changes were tested with simulated responses, not live API calls.
+Describing service work does not
 automatically choose an unscheduled ticket. After routing, the customer chooses
 an appointment, ticket, or summary. Common clear preview agreement such as
 'yes that looks fine' confirms locally; corrections still require fresh review.

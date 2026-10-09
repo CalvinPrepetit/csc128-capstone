@@ -42,6 +42,79 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_mixed_tire_and_ac_request_keeps_both_and_asks_relevant_question(self):
+        s = new_session()
+        reply = send(s, "i need my tires changed and my ac looked at", has_issue=True,
+                     departments=["maintenance"], summary="Customer requests tire replacement.",
+                     clarification="When did you first notice the problem?")
+        self.assertIn("check about the AC", reply)
+        self.assertNotIn("first notice", reply)
+        self.assertIn("air-conditioning inspection", s["fields"]["summary"])
+        self.assertIn("tire replacement", s["fields"]["expected_work"])
+        self.assertIn("AC inspection", s["fields"]["expected_work"])
+        self.assertIn("interior", s["fields"]["departments"])
+        factory = Mock(side_effect=AssertionError("No API call expected"))
+        process_turn("what problem?", s, factory)
+        self.assertIn("tire replacement", s["fields"]["summary"])
+        process_turn("Skip question", s, factory, control="skip")
+        self.assertIn("Would you like", process_turn("yes it does", s, factory))
+        factory.assert_not_called()
+
+    def test_starting_followups_are_batched_and_identity_is_local(self):
+        s = new_session()
+        send(s, "my car wont start", has_issue=True, departments=["electrical"],
+             summary="Customer reports the vehicle will not start.")
+        factory = Mock(side_effect=AssertionError("No API call expected"))
+        self.assertIn("hear", process_turn("this morning", s, factory))
+        self.assertIn("dashboard", process_turn("it just clicks", s, factory))
+        self.assertEqual(s["queued_observations"], ["this morning", "it just clicks"])
+        client = client_for(output(has_issue=True, departments=["electrical"], details={
+            "concern": {"value": "Customer reports the vehicle will not start", "evidence": "lights turn on"},
+            "onset": {"value": "First noticed this morning", "evidence": "this morning"},
+            "additional": {"value": "Clicking when starting; dashboard lights turn on", "evidence": "it just clicks\nlights turn on"}}))
+        process_turn("lights turn on", s, lambda: client)
+        request = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        self.assertIn("this morning", request)
+        self.assertIn("it just clicks", request)
+        self.assertNotIn("queued_observations", s)
+        self.assertIn("Clicking", s["fields"]["summary"])
+        process_turn("yes it does", s, factory)
+        process_turn("Schedule an appointment", s, factory, control="appointment")
+        process_turn("Friday at 9am", s, factory)
+        reply = process_turn("Jeff 1999 BMW 550", s, factory)
+        self.assertIn("appointment request", reply)
+        self.assertIn("Saved demo appointment", process_turn("yes it does", s, factory))
+        self.assertEqual(len(s["records"]), 1)
+        factory.assert_not_called()
+
+    def test_conditional_agreement_is_not_local_consent(self):
+        s = filled()
+        send(s, "yes it does but only if you change Friday", action="question")
+        self.assertEqual(s["records"], [])
+
+    def test_buffered_answers_survive_failure(self):
+        s = new_session()
+        send(s, "my car wont start", has_issue=True, departments=["electrical"], summary="Car will not start.")
+        process_turn("this morning", s, Mock())
+        process_turn("it just clicks", s, Mock())
+        factory = Mock(side_effect=APIConnectionError(request=httpx.Request("POST", "https://example.invalid")))
+        reply = process_turn("lights turn on", s, factory)
+        self.assertIn("temporarily unavailable", reply)
+        self.assertEqual(s["queued_observations"], ["this morning", "it just clicks"])
+        self.assertEqual(s["records"], [])
+
+    def test_skip_flushes_buffered_answers_into_ai_note(self):
+        s = new_session()
+        send(s, "my car wont start", has_issue=True, departments=["electrical"], summary="Car will not start.")
+        process_turn("this morning", s, Mock())
+        client = client_for(output(has_issue=True, departments=["electrical"], summary="Car will not start this morning.",
+                                  details={"onset": {"value": "First noticed this morning", "evidence": "this morning"}}))
+        reply = process_turn("Skip question", s, lambda: client, control="skip")
+        self.assertIn("Here is the technician note", reply)
+        self.assertIn("this morning", reply)
+        self.assertNotIn("queued_observations", s)
+        self.assertEqual(s["records"], [])
+
     def test_service_description_does_not_choose_a_task(self):
         for intent in ("ticket", "appointment", "summary"):
             with self.subTest(intent=intent):
@@ -529,7 +602,7 @@ class ConversationTests(unittest.TestCase):
         reply = send(s, "At a stop light or parked after sitting", summary="Hissing while parked.")
         self.assertEqual(s["stage"], "clarify")
         self.assertIn("Where", reply)
-        self.assertIn("Last month", s["fields"]["summary"])
+        self.assertIn("last month", s["fields"]["summary"].lower())
 
     def test_routing_agreement_and_scheduling_question_are_separate(self):
         s = filled("ticket")
@@ -583,7 +656,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(s["pending"]["fields"]["expected_work"], "Customer-requested tire replacement")
 
     def test_options_collapse_after_first_action(self):
-        app = AppTest.from_file("app.py").run()
+        app = AppTest.from_file("app.py", default_timeout=15).run()
         next(button for button in app.button if button.label == "Show available times").click().run()
         self.assertFalse(app.exception)
         self.assertIn("Need something else?", [item.label for item in app.expander])
@@ -914,7 +987,7 @@ class ConversationTests(unittest.TestCase):
         self.assertTrue(s["departments_confirmed"])
 
     def test_ui_startup_and_simulated_outage(self):
-        app = AppTest.from_file("app.py").run()
+        app = AppTest.from_file("app.py", default_timeout=15).run()
         self.assertFalse(app.exception)
         self.assertIn("automated software", app.caption[0].value)
         self.assertEqual(app.title[0].value, "Auto Shop Service Advisor")

@@ -42,6 +42,9 @@ Use null for absent slots; do not include placeholder values. Use empty strings
 for reasons belonging to departments that are not suggested.
 Extract all volunteered details including corrections. Never guess missing values.
 Only include fields supplied IN THIS LATEST MESSAGE, not earlier unchanged fields.
+The latest message may bundle locally collected follow-up answers on separate
+lines. Use all of them to clean up the note; preserve every requested service,
+including tire replacement AND AC inspection when both were requested.
 expected_work is optional: include it only for explicit requested work, such as
 'oil change' or 'inspect the noise'. A symptom is not an instruction to repair it.
 'Passenger window stopped working' is a symptom, not expected_work.
