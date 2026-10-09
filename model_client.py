@@ -65,6 +65,9 @@ evidence for Python to resolve. Explicit weekdays work beside relative words.
 Symptom dates/times ('this morning', 'Monday at 6am it clicked') are history,
 never appointment slots. expected_work is explicitly requested work, not symptoms.
 Preserve ALL requested jobs, e.g. oil change AND headlights replacement.
+Shared verbs apply to each job: 'tires and oil changed' requests tire replacement
+AND an oil change. Oil service is an oil change, not 'oil replacement'. Routine
+service requests do not establish a symptom or require an onset interview.
 
 NOTES: write a complete, readable, cumulative third-person technician note.
 Example: 'Customer reports an unusual noise from the muffler while driving,

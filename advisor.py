@@ -12,7 +12,7 @@ from model_client import MODEL, interpret
 from tools import (find_openings, normalize_day, normalize_time, save_record,
                    validate_fields, slot_evidence, visit_selection)
 from intake import (normalize, boundary, requested_intent, requested_work,
-                    routine_service, policy_topic, preserve_observations, moving_stall, stalling_note,
+                    routine_service, routine_requests, policy_topic, preserve_observations, moving_stall, stalling_note,
                     readable_fallback, tire_request, suspected_location, ac_request, requested_parts)
 
 GREETING = ("Welcome! I'm your Auto Shop Service Advisor.\n\n"
@@ -272,7 +272,7 @@ def apply_updates(result, text, session):
             session["fields"]["summary"] = result["summary"]
         elif first_concern and result["has_issue"]:
             work = session["fields"]["expected_work"]
-            session["fields"]["summary"] = (f"Customer requests {work}." if work
+            session["fields"]["summary"] = (f"Customer requests {work.replace('Customer-requested ', '')}." if work
                                              else stalling_note(text) or readable_fallback(text) or "Customer reports: " + text)
         departments = list(dict.fromkeys(result["departments"] or old_departments))
         if "Customer-requested tire replacement" in session["fields"]["expected_work"] and "maintenance" not in departments:
@@ -374,20 +374,25 @@ def handle(text, session, client_factory, control=None):
             session["departments_confirmed"] = False
             return advance(session)
     answering_issue = session["stage"] == "clarify" and not control
-    tire_work = tire_request(text)
-    service_filler = {"i", "my", "the", "just", "jsut", "also", "and", "could", "can", "please", "guess", "that", "works", "while", "im", "here"}
-    if (tire_work and not session["last_saved"] and not control
-            and set(clean.replace(normalize(tire_work), "").split()) <= service_filler):
+    routine_jobs = routine_requests(text)
+    remainder = clean
+    for job, evidence in routine_jobs:
+        remainder = remainder.replace(normalize(evidence), "")
+    service_filler = {"i", "my", "the", "need", "want", "get", "just", "jsut", "also", "and", "could", "can", "please", "guess", "that", "works", "while", "im", "here"}
+    if (routine_jobs and not session["last_saved"] and not control
+            and set(remainder.split()) <= service_filler):
         invalidate(session)
         f = session["fields"]
-        if "tire replacement" not in f["expected_work"]:
-            if f["expected_work"] == "Diagnostic inspection of reported concern":
-                f["expected_work"] = ""
-            f["expected_work"] = (f["expected_work"] + "; " if f["expected_work"] else "") + "Customer-requested tire replacement"
+        if f["expected_work"] == "Diagnostic inspection of reported concern":
+            f["expected_work"] = ""
+        for job, evidence in routine_jobs:
+            if job not in f["expected_work"].lower():
+                label = "Customer-requested tire replacement" if job == "tire replacement" else job
+                f["expected_work"] += ("; " if f["expected_work"] else "") + label
+            if job not in f["summary"].lower():
+                f["summary"] += (" " if f["summary"] else "") + "Customer requests " + job + "."
         session["departments_confirmed"] = session["departments_confirmed"] and "maintenance" in f["departments"]
         f["departments"] = list(dict.fromkeys(f["departments"] + ["maintenance"]))
-        if "tire replacement" not in f["summary"].lower():
-            f["summary"] = (f["summary"] + " " if f["summary"] else "") + "Customer requests tire replacement."
         session["issue_messages"].append(text)
         return advance(session)
     if control == "confirm" or (not answering_issue and clear_agreement(text)):

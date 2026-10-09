@@ -42,6 +42,52 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_approximate_onset_survives_incomplete_optional_model_evidence(self):
+        s = new_session()
+        send(s, "My car is making a weird noise at the muffler", has_issue=True,
+             summary="Customer reports a noise from the muffler.", departments=["drivability"])
+        reply = send(s, "Last week or so", has_issue=True,
+                     summary="Customer reports a noise from the muffler.",
+                     details={"onset": {"value": "Last week", "evidence": ""}})
+        self.assertNotIn("could not validate", reply)
+        self.assertIn("last week or so", s["fields"]["summary"].lower())
+        self.assertIn("When do you hear", reply)
+        self.assertEqual(s["records"], [])
+
+    def test_compound_routine_request_keeps_both_jobs_without_symptom_interview(self):
+        for text in ("i need my tires and oil changed", "I need my oil and tires changed"):
+            with self.subTest(text=text):
+                s = new_session()
+                factory = Mock(side_effect=AssertionError("Explicit routine jobs need no interpretation call"))
+                reply = process_turn(text, s, factory)
+                self.assertNotIn("first notice", reply)
+                self.assertIn("tire replacement", s["fields"]["expected_work"])
+                self.assertIn("oil change", s["fields"]["expected_work"])
+                self.assertNotIn("Customer requests Customer-requested", reply)
+                process_turn("yes", s, factory)
+                process_turn("Tuesday at 9am", s, factory)
+                process_turn("jack 2024 honda accord", s, factory)
+                process_turn("yes", s, factory)
+                record = s["records"][0]
+                self.assertIn("tire replacement", record["expected_work"])
+                self.assertIn("oil change", record["expected_work"])
+                self.assertIn("tire replacement", record["summary"])
+                self.assertIn("oil change", record["summary"])
+                factory.assert_not_called()
+
+    def test_oil_addition_is_service_not_symptom_and_uses_conventional_name(self):
+        s = new_session()
+        send(s, "I need my tires changed")
+        reply = send(s, "well i also need my oil changed but hte department seems right",
+                     has_issue=True, summary="Customer requests oil replacement.",
+                     departments=["maintenance"], clarification="When did you first notice the problem?",
+                     details={"concern": {"value": "Customer requests oil replacement.", "evidence": "my oil changed"}})
+        self.assertNotIn("first notice", reply)
+        self.assertIn("tire replacement", s["fields"]["expected_work"])
+        self.assertIn("oil change", s["fields"]["expected_work"])
+        self.assertNotIn("oil replacement", reply)
+        self.assertEqual(s["fields"]["summary"].lower().count("oil change"), 1)
+
     def test_bad_request_uses_one_validated_json_format_fallback(self):
         s = new_session()
         send(s, "i need my tires changed")

@@ -10,6 +10,11 @@ def detail_words(text):
     return set(normalize(text).split()) - NOTE_FILLER
 
 
+def service_text(text):
+    text = re.sub(r"\boil replacement\b", "oil change", text, flags=re.I)
+    return re.sub(r"\bCustomer requests Customer-requested\b", "Customer requests", text, flags=re.I)
+
+
 def routing_hint(text):
     """Use approved service areas for explicit components when the model gives none."""
     areas = {"drivability": r"\b(?:muffler|exhaust|brakes?|steering|transmission|engine)\b",
@@ -100,8 +105,27 @@ def requested_work(value, text):
 
 
 def routine_service(text):
-    return matches(r"\b(?:oil change|tire rotation|tire replacement|routine|scheduled maintenance)\b|"
-                   r"\b(?:want|need|please|get)\b.*\btires?\b.*\b(?:changed|chaned|replaced)\b", text)
+    service = bool(routine_requests(text)) or matches(r"\b(?:oil change|tire rotation|tire replacement|routine|scheduled maintenance)\b", text)
+    symptom = matches(r"\b(?:noise|noises|bumping|shaking|vibration|smoke|leak|leaking|hiss|hissing|clicking|broken|fault|won t|wont)\b", text)
+    return service and not symptom
+
+
+def routine_requests(text):
+    """Keep every job when routine services share a verb, e.g. tires and oil changed."""
+    if (not matches(r"\b(?:needs?|wants?|requests?|please|get|book|schedule|create|can you|could you|can i|could i)\b", text)
+            or matches(r"\b(?:not|don t|dont|cancel|no longer)\b", text)):
+        return []
+    jobs = {}
+    pattern = (r"\b((?:tires?|oil)(?:\s+and\s+(?:(?:my|the)\s+)?(?:tires?|oil))*)"
+               r"\s+(?:need\s+(?:to\s+be\s+)?)?(?:changed|chaned|replaced)\b|"
+               r"\b(oil change|tire rotation|tire replacement)\b")
+    for match in re.finditer(pattern, text, re.I):
+        labels = (["tire replacement"] if matches(r"\btires?\b", match[1] or "") else [])
+        if matches(r"\boil\b", match[1] or ""):
+            labels.append("oil change")
+        for label in labels or [match[2].lower()]:
+            jobs[label] = match.group()
+    return list(jobs.items())
 
 
 def tire_request(text):
@@ -122,14 +146,15 @@ def ac_request(text):
 
 def requested_parts(text):
     """Retain explicit part-service clauses when the model extracts only one job."""
-    parts = []
+    parts = [job for job, evidence in routine_requests(text)]
     for clause in re.split(r"\band\b|[.;]", normalize(text)):
         if matches(r"\b(?:not|don t|dont|cancel|no longer)\b", clause):
             continue
         match = re.search(r"\bneeds?\s+(?:my |the |a |an )?([a-z]+(?: [a-z]+){0,2}?)\s+(replaced|changed|checked)\b", clause)
         if match and not matches(r"\b(?:tires?|to|be|it|this|that)\b", match[1]):
             action = {"replaced": "replacement", "changed": "replacement", "checked": "inspection"}[match[2]]
-            parts.append(match[1] + " " + action)
+            parts.append("oil change" if match[1] == "oil" and match[2] == "changed"
+                         else match[1] + " " + action)
     return list(dict.fromkeys(parts))
 
 
@@ -209,6 +234,7 @@ def onset_observation(text):
 def preserve_observations(session, text, question="", details=None, polished_note=""):
     """Keep the latest answer per topic so revisions cannot silently erase observations."""
     clean_details = session.setdefault("intake_details", {})
+    verified_details = {}
     for topic, item in (details or {}).items():
         if item is None:
             continue
@@ -219,7 +245,9 @@ def preserve_observations(session, text, question="", details=None, polished_not
                 or not isinstance(item["value"], str) or not item["value"].strip()
                 or len(item["value"]) > 500 or not isinstance(item["evidence"], str)
                 or not item["evidence"].strip()):
-            raise ValueError("Observation lacks customer evidence")
+            session["tool_log"].append({"tool": "validate_observation", "topic": topic,
+                                        "ignored": "Incomplete optional observation"})
+            continue
         if item["evidence"] not in text:
             session["tool_log"].append({"tool": "validate_observation", "topic": topic,
                                         "ignored": "No evidence in latest message"})
@@ -227,7 +255,8 @@ def preserve_observations(session, text, question="", details=None, polished_not
         if (topic == "onset" and matches(r"\b(?:driving|drive|dirve|moving|speed)\b", item["evidence"])
                 and not matches(r"\b(?:first|started|began|noticed|today|yesterday|ago|last|since)\b", item["evidence"])):
             continue  # A driving condition does not establish when the problem began.
-        answer = item["value"].strip().rstrip(".") + "."
+        verified_details[topic] = item
+        answer = service_text(item["value"].strip().rstrip(".")) + "."
         previous = clean_details.get(topic, "")
         correction = matches(r"\b(?:actually|correction|instead|i meant|rather than)\b", text)
         if previous and topic in {"concern", "conditions", "additional"} and not correction:
@@ -236,8 +265,9 @@ def preserve_observations(session, text, question="", details=None, polished_not
             if not detail_words(previous) <= detail_words(answer):
                 answer = previous + " " + answer
         clean_details[topic] = answer
+    details = verified_details
     if session["fields"]["summary"] and not clean_details.get("concern"):
-        clean_details["concern"] = session["fields"]["summary"]
+        clean_details["concern"] = service_text(session["fields"]["summary"])
     key = normalize(question)
     short_answer = normalize(text.splitlines()[-1])
     topic = ("onset" if re.search(r"first notice|(?:did|does).*start|begin", key)
@@ -275,7 +305,7 @@ def preserve_observations(session, text, question="", details=None, polished_not
         clean_details["conditions"] += " Customer also reports the concern at low speed."
     if clean_details.get("concern"):
         # Keep the AI's readable note; append verified observations it omitted.
-        note = polished_note.strip()
+        note = service_text(polished_note.strip())
         for answer in clean_details.values():
             words = detail_words(answer)
             if not words <= set(normalize(note).split()):
@@ -355,6 +385,7 @@ def preserve_observations(session, text, question="", details=None, polished_not
         note += " Customer also requests an air-conditioning inspection; no specific AC fault is assumed."
     note = re.sub(r"\bunknown\s*\.", "", note, flags=re.I).strip()
     note = re.sub(r"^(?:car|vehicle)\s", "Customer reports the vehicle ", note, flags=re.I)
+    note = service_text(note)
     session["fields"]["summary"] = note[:1].upper() + note[1:]
     if not session["fields"]["departments"]:
         session["fields"]["departments"] = routing_hint(" ".join(session.get("issue_messages", []) + [text]))
