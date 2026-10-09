@@ -660,6 +660,8 @@ def process_turn(text, session, client_factory, control=None):
         reply = handle(text, session, client_factory, control)
     except Exception as error:
         invalidate(session)
+        session["tool_log"].append({"tool": "advisor_error", "error": type(error).__name__,
+                                   "status": getattr(error, "status_code", None)})
         if isinstance(error, RateLimitError):
             session["retry_until"] = time.time() + retry_seconds(error)
         reply = friendly_error(error)

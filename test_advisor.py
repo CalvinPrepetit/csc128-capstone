@@ -42,6 +42,12 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_failure_log_records_type_without_secret_error_message(self):
+        s = new_session()
+        factory = Mock(side_effect=APIConnectionError(request=httpx.Request("POST", "https://example.invalid")))
+        process_turn("My car is making a noise", s, factory)
+        self.assertEqual(s["tool_log"][-1], {"tool": "advisor_error", "error": "APIConnectionError", "status": None})
+
     def test_model_understands_task_choice_without_keyword_gate(self):
         for intent, phrase in (("appointment", "yes when can icome in"),
                                ("appointment", "yes this is fine when can i come in"),
