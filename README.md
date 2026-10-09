@@ -89,9 +89,11 @@ a vehicle fault.
 - `knowledge.py`: fictional guide and small retriever.
 - `test_advisor.py`: deterministic and simulated failure tests; no API key required.
 
-Final turn-in materials are in `submission/`: the approved proposal, 3-page design
-PDF and editable source, recording rundown, and submission checklist. Upload the
-PDF and your recorded video separately, alongside the public app and repository links.
+The required 3-page design PDF is in `submission/`. Upload it and your recorded
+video separately, alongside the public app and repository links. For Brightspace,
+also attach the Python files, requirements.txt, README.md, and .gitignore individually.
+Personal recording notes, checklists, editable drafts, and the already-submitted
+proposal are kept locally outside this repository. Never upload real secrets.
 
 ## Run and Deploy
 
