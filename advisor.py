@@ -164,9 +164,15 @@ def advance(session):
     if not session["departments_confirmed"]:
         session["stage"] = "departments"
         suggestions = "\n".join(f"- {d.title()}: {session['reasons'].get(d) or DEPARTMENTS[d]}" for d in f["departments"])
+        next_step = ("Does this note look right, and would you like to schedule a visit? Reply yes to see openings, "
+                     "or tell me what to add or change. You can also request an unscheduled ticket or a summary."
+                     if session["intent"] in {"triage", "appointment"} else
+                     "Does this note describe the concern correctly? Reply yes to use it for your "
+                     + ("unscheduled service ticket" if session["intent"] == "ticket" else "technician summary")
+                     + ", or tell me what to change.")
         return ("Here is the technician note so far:\n\n" + f["summary"] +
                 "\n\nSuggested departments for inspection, not a diagnosis:\n\n" + suggestions +
-                "\n\nDoes this note describe the concern correctly? Reply yes to use this intake routing, or tell me what to change.")
+                "\n\n" + next_step + " Nothing has been booked or saved yet.")
     if session["intent"] == "triage":
         session["stage"] = "routed"
         return ("Confirmed departments: " + ", ".join(f["departments"]) +
@@ -305,6 +311,8 @@ def apply_updates(result, text, session):
 def confirm(session):
     if session["stage"] == "departments":
         session["departments_confirmed"] = True
+        if session["intent"] == "triage":
+            session["intent"] = "appointment"
         return advance(session)
     pending = session["pending"]
     if pending:
@@ -331,6 +339,9 @@ def confirm(session):
 
 def handle(text, session, client_factory, control=None):
     clean = normalize(text)
+    if not control:
+        control = {"show my technician summary": "summary", "create a service ticket": "ticket",
+                   "schedule an appointment": "appointment", "show available times": "openings"}.get(clean)
     if clean in {"cancel", "restart", "start over"}:
         records = session["records"]
         session.clear()
@@ -374,6 +385,21 @@ def handle(text, session, client_factory, control=None):
             session["departments_confirmed"] = False
             return advance(session)
     answering_issue = session["stage"] == "clarify" and not control
+    if session.get("question_queue") is not None and session["stage"] == "clarify" and (
+            control == "skip" or (answering_issue and not requested_intent(text) and "?" not in text)):
+        skipped = control == "skip" or uncertain_reply(text) or clean in {"skip", "skip question"}
+        session.setdefault("collected_answers", []).append({"question": session["last_question"], "answer": text})
+        if not skipped:
+            session.setdefault("queued_observations", []).append(text)
+            session["issue_messages"].append(text)
+        if session["question_queue"]:
+            session["last_question"] = session["question_queue"].pop(0)
+            session["questions_asked"] += 1
+            return session["last_question"] + "\n\nIf you are unsure, say so or choose Skip question."
+        session.pop("question_queue")
+        session["intake_complete"] = True
+        session["questions_asked"] = 3
+        return handle("", session, client_factory, control="finish")
     routine_jobs = routine_requests(text)
     remainder = clean
     for job, evidence in routine_jobs:
@@ -497,9 +523,9 @@ def handle(text, session, client_factory, control=None):
         return rate_limit_message(remaining)
     model_text = "\n".join(session.get("queued_observations", []) + [text])
     result = interpret(model_text, session, client_factory())
-    if session.get("safety_handoff") and answering_issue and result["refusal"] == "unsafe":
+    if session.get("safety_handoff") and (answering_issue or control == "finish") and result["refusal"] == "unsafe":
         result["refusal"] = ""  # Documenting reported facts follows the visible safety referral.
-    if session.get("queued_observations"):
+    if session.get("queued_observations") or control == "finish":
         result["has_issue"] = True
         result["updates"].pop("day", None)
         result["updates"].pop("time", None)
@@ -635,6 +661,8 @@ def handle(text, session, client_factory, control=None):
         candidate["intent"] = result["intent"]
     if routing_ok:
         candidate["departments_confirmed"] = True
+        if candidate["intent"] == "triage":
+            candidate["intent"] = "appointment"
     if candidate["intent"] == "ticket" and re.search(r"\b(?:unscheduled|without an? appointment|no appointment)\b", clean):
         candidate["fields"]["day"] = candidate["fields"]["time"] = ""
     session.update(candidate)
@@ -643,6 +671,15 @@ def handle(text, session, client_factory, control=None):
         session.setdefault("issue_messages", []).append(text)
     clarification = result["clarification"].strip()
     routine = routine_service(text) and not (session.get("ac_inspection_requested") and not session.get("ac_detail_collected"))
+    plan = result["questions"]
+    if result["has_issue"] and plan is not None and session["questions_asked"] == 0:
+        if plan and not routine:
+            session["last_question"] = plan[0]
+            session["question_queue"] = plan[1:]
+            session["questions_asked"] = 1
+            session["stage"] = "clarify"
+            return (prefix + "\n\n" if prefix else "") + plan[0] + "\n\nIf you are unsure, say so or choose Skip question."
+        return (prefix + "\n\n" if prefix else "") + advance(session)
     if result["has_issue"] and session["questions_asked"] == 0 and not routine and not session["departments_confirmed"]:
         clarification = intake_question(session, clarification)
     elif symptom_answer:

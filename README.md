@@ -28,7 +28,8 @@ Each request covers 1 vehicle. For another vehicle, start a separate request.
 - Give all your details at once or supply missing details later.
 - Symptom intake collects up to 3 focused observations before routing, with a Skip question button.
 - Symptom dates/times stay in the technician history; they do not fill appointment slots.
-- Confirm suggested departments before proceeding. A suggestion is not a diagnosis.
+- Review the note and suggested departments. Reply yes to see appointment openings,
+  or ask for an unscheduled ticket or summary instead. A suggestion is not a diagnosis.
 - Start with the visible How can I help buttons or type a request. After the first turn,
   the buttons collapse under Need something else so they do not crowd the conversation.
 - Contact a service advisor gives a human handoff message while keeping current details.
@@ -51,6 +52,12 @@ The model interprets language, proposes extracted values, suggests departments,
 chooses clarification, and drafts the technician note. Python validates values
 against customer evidence and the approved lists. It owns availability, exact
 appointment values, confirmation state, identifiers, and committed records.
+
+An initial concern normally uses 1 AI call for a note and up to 3 planned questions.
+Python collects those answers locally, then makes 1 call to polish the complete
+note. Sufficient detail needs no interview. Clear routine jobs, typed task commands,
+displayed time choices, identity entries and confirmations work without AI calls.
+Ambiguous corrections may need another call; provider limits still apply.
 
 Original messages are stored directly from conversation data, alongside the note.
 The model is not responsible for copying them. Model notes can omit details, so
@@ -116,7 +123,7 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 100 no-key tests passed. Clear tire requests and additions,
+Verification checkpoint: 115 no-key tests passed. Clear tire requests and additions,
 friendly scheduling replies, and separate vehicle/name replies work locally.
 Reported symptom conditions and added work remain in the reviewed note.
 Clear clicking and lighting
@@ -135,10 +142,10 @@ entries and 'yes it does' are local; ambiguous replies still use the model.
 Mixed tire replacement and AC inspection retain both requests and ask what the
 technician should check about the AC, not when an unspecified fault started.
 Provider limits can still occur; timed retries and retained details remain.
-These latest changes were tested with simulated responses, not live API calls.
 Describing service work does not
-automatically choose an unscheduled ticket. After routing, the customer chooses
-an appointment, ticket, or summary. Common clear preview agreement such as
+automatically choose an unscheduled ticket. The note offers scheduling; agreement
+shows openings without booking. A ticket or summary can be requested instead.
+Common clear preview agreement such as
 'yes that looks fine' confirms locally; corrections still require fresh review.
 Intake details now use evidence-backed,
 AI-written observations retained by topic, avoiding repeated questions and raw-answer

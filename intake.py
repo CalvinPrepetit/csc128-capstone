@@ -269,7 +269,7 @@ def preserve_observations(session, text, question="", details=None, polished_not
     if session["fields"]["summary"] and not clean_details.get("concern"):
         clean_details["concern"] = service_text(session["fields"]["summary"])
     key = normalize(question)
-    short_answer = normalize(text.splitlines()[-1])
+    short_answer = normalize(text.splitlines()[-1] if text.splitlines() else "")
     topic = ("onset" if re.search(r"first notice|(?:did|does).*start|begin", key)
              else "location" if re.search(r"where|which.*(?:area|part)", key)
              else "conditions" if re.search(r"when|what.*(?:doing|speed)", key) else "additional")

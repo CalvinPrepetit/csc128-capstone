@@ -16,7 +16,7 @@ from tools import normalize_day, normalize_time, find_openings, save_record, OPE
 
 def output(**changes):
     data = dict(intent="continue", action="provide", updates={}, departments=[], reasons={},
-                has_issue=False, routing_agreement=False, summary="", clarification="", policy_topic="", refusal="", details={})
+                has_issue=False, routing_agreement=False, summary="", clarification="", questions=None, policy_topic="", refusal="", details={})
     data.update(changes)
     return data
 
@@ -42,6 +42,82 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_planned_followups_use_two_calls_then_book_locally(self):
+        s = new_session()
+        client = client_for(output())
+        notes = [output(has_issue=True, departments=["drivability"],
+                        summary="Customer reports a noise from the muffler.",
+                        questions=["When did you first notice it?", "When do you hear the noise?"]),
+                 output(has_issue=True, departments=["drivability"], questions=[],
+                        summary="Customer reports a muffler noise while driving, first noticed about last week.",
+                        details={"onset": {"value": "First noticed about last week", "evidence": "Last week or so"},
+                                 "conditions": {"value": "Noise occurs while driving", "evidence": "when driving"}})]
+        client.chat.completions.create.side_effect = [client_for(n).chat.completions.create() for n in notes]
+        factory = lambda: client
+        self.assertIn("first notice", process_turn("My muffler makes a weird noise", s, factory))
+        self.assertIn("hear the noise", process_turn("Last week or so", s, factory))
+        self.assertEqual(client.chat.completions.create.call_count, 1)
+        reply = process_turn("when driving", s, factory)
+        self.assertIn("would you like to schedule", reply)
+        self.assertIn("about last week", reply)
+        self.assertIn("while driving", reply)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        context = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+        self.assertEqual(len(context["collected_answers"]), 2)
+        self.assertTrue(context["intake_complete"])
+        self.assertIn("Available demo intake times", process_turn("yes", s, factory))
+        process_turn("Friday at 9am", s, factory)
+        process_turn("Jack 1994 Toyota Camry", s, factory)
+        process_turn("actually can i do Monday", s, factory)
+        process_turn("11am thanks", s, factory)
+        self.assertIn("Saved demo appointment", process_turn("yes", s, factory))
+        process_turn("yes", s, factory)
+        self.assertEqual(len(s["records"]), 1)
+        self.assertEqual(s["records"][0]["day"], "Monday")
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+
+    def test_sufficient_first_description_does_not_repeat_questions(self):
+        s = new_session()
+        reply = send(s, "Muffler rattles when driving since last week", has_issue=True,
+                     departments=["drivability"], questions=[],
+                     summary="Customer reports a muffler rattle while driving, first noticed last week.")
+        self.assertEqual(s["stage"], "departments")
+        self.assertNotIn("When did", reply)
+        self.assertIn("schedule a visit", reply)
+        self.assertEqual(s["records"], [])
+
+    def test_planned_unknown_and_skip_are_not_written_as_symptoms(self):
+        s = new_session()
+        send(s, "My car makes a noise", has_issue=True, departments=["drivability"],
+             summary="Customer reports an unusual vehicle noise.",
+             questions=["When did it start?", "Where do you hear it?"])
+        factory = Mock(side_effect=AssertionError("Collect the first answer locally"))
+        process_turn("Im unsure", s, factory)
+        client = client_for(output(has_issue=True, departments=["drivability"], questions=[],
+                                   summary="Customer reports an unusual vehicle noise; onset and location are unknown."))
+        process_turn("Skip question", s, lambda: client, control="skip")
+        self.assertEqual(s["stage"], "departments")
+        self.assertNotIn("Customer reports skip", s["fields"]["summary"].lower())
+        self.assertEqual(client.chat.completions.create.call_count, 1)
+        self.assertEqual(s["records"], [])
+
+    def test_typed_summary_and_ticket_choices_need_no_api(self):
+        for command, kind in (("Show my technician summary", "summary"), ("Create a service ticket", "ticket")):
+            with self.subTest(kind=kind):
+                s = new_session()
+                factory = Mock(side_effect=AssertionError("Clear commands are local"))
+                process_turn("I need my tires and oil changed", s, factory)
+                process_turn(command, s, factory)
+                process_turn("yes", s, factory)
+                if kind == "ticket":
+                    process_turn("Demo 2020 Honda Civic", s, factory)
+                self.assertEqual(s["pending"]["kind"], kind)
+                process_turn("yes", s, factory)
+                self.assertEqual(len(s["records"]), int(kind == "ticket"))
+                if kind == "ticket":
+                    self.assertEqual(s["records"][0]["day"], "")
+                factory.assert_not_called()
+
     def test_approximate_onset_survives_incomplete_optional_model_evidence(self):
         s = new_session()
         send(s, "My car is making a weird noise at the muffler", has_issue=True,
@@ -404,7 +480,7 @@ class ConversationTests(unittest.TestCase):
         process_turn("what problem?", s, factory)
         self.assertIn("tire replacement", s["fields"]["summary"])
         process_turn("Skip question", s, factory, control="skip")
-        self.assertIn("Would you like", process_turn("yes it does", s, factory))
+        self.assertIn("Available demo intake times", process_turn("yes it does", s, factory))
         factory.assert_not_called()
 
     def test_starting_followups_are_batched_and_identity_is_local(self):
@@ -473,11 +549,11 @@ class ConversationTests(unittest.TestCase):
                 send(s, "Hi my car needs an oil change", intent=intent, has_issue=True,
                      summary="Customer requests an oil change.", departments=["maintenance"])
                 reply = process_turn("Yes", s, Mock())
-                self.assertIn("Would you like to schedule an appointment", reply)
-                self.assertEqual(s["intent"], "triage")
-                self.assertEqual(s["stage"], "routed")
+                self.assertIn("Available demo intake times", reply)
+                self.assertEqual(s["intent"], "appointment")
+                self.assertEqual(s["stage"], "schedule")
                 self.assertIsNone(s["pending"])
-                self.assertIn("Would you like", process_turn("yes", s, Mock()))
+                self.assertIn("no preview", process_turn("yes", s, Mock()))
                 self.assertEqual(s["records"], [])
 
     def test_next_step_appointment_keeps_concern_and_checks_times_first(self):

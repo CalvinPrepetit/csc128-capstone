@@ -53,7 +53,8 @@ def main():
     if session["stage"] == "clarify" and st.button("Skip question"):
         action = ("Skip question", "skip")
     if session["stage"] == "departments" or session["pending"]:
-        label = "Confirm departments" if session["stage"] == "departments" else "Confirm displayed details"
+        label = ("Confirm note and see openings" if session["stage"] == "departments"
+                 and session["intent"] in {"triage", "appointment"} else "Confirm displayed details")
         if st.button(label):
             action = (label, "confirm")
     options = (("Describe a vehicle concern", "triage"), ("Schedule an appointment", "appointment"),
