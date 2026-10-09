@@ -42,6 +42,19 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_complete_facts_suppress_extra_question_and_duplicate_car_wording(self):
+        s = new_session()
+        text = "My muffler rattles while driving. It started last week and seems to come from the rear of the car."
+        note = "Customer reports muffler rattling while driving, first noticed last week, possibly from the rear of the vehicle."
+        reply = send(s, text, has_issue=True, departments=["drivability"], summary=note,
+                     questions=["Are there any other symptoms?"], details={
+                         "onset": {"value": "last week", "evidence": "last week"},
+                         "location": {"value": "rear of the car", "evidence": "rear of the car"}})
+        self.assertEqual(s["stage"], "departments")
+        self.assertNotIn("Are there any other symptoms?", reply)
+        self.assertEqual(s["fields"]["summary"], note)
+        self.assertEqual(s["records"], [])
+
     def test_absent_optional_observations_do_not_block_valid_intake(self):
         data = output(has_issue=True, departments=["drivability"], questions=[],
                       summary="Customer reports muffler rattling while driving, first noticed last week.")

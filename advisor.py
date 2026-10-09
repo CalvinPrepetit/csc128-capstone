@@ -673,6 +673,9 @@ def handle(text, session, client_factory, control=None):
     routine = routine_service(text) and not (session.get("ac_inspection_requested") and not session.get("ac_detail_collected"))
     plan = result["questions"]
     if result["has_issue"] and plan is not None and session["questions_asked"] == 0:
+        known = session.get("intake_details", {})
+        if known.get("onset") and known.get("location") and not intake_question(session, ""):
+            plan = []  # Enough facts for the standard intake; do not prolong the interview.
         if plan and not routine:
             session["last_question"] = plan[0]
             session["question_queue"] = plan[1:]

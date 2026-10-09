@@ -1,7 +1,7 @@
 """Small language safeguards; the model still interprets the open-ended concern."""
 import re
 
-NOTE_FILLER = {"customer", "reports", "reported", "vehicle", "occurs", "when",
+NOTE_FILLER = {"customer", "reports", "reported", "vehicle", "car", "occurs", "when",
                "the", "a", "an", "is", "at", "of", "first", "noticed",
                "i", "my", "there", "it", "its", "s", "am", "im"}
 

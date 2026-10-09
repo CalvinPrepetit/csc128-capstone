@@ -123,7 +123,7 @@ agreement causing a preview loop, and optional extraction fields blocking intake
 The design document explains the main changes. Passing focused samples does not
 prove every possible conversation will work.
 
-Verification checkpoint: 116 no-key tests passed. Clear tire requests and additions,
+Verification checkpoint: 117 no-key tests passed. Clear tire requests and additions,
 friendly scheduling replies, and separate vehicle/name replies work locally.
 Reported symptom conditions and added work remain in the reviewed note.
 Clear clicking and lighting
