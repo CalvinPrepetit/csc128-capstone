@@ -169,7 +169,7 @@ def starting_observations(text):
         facts["lighting"] = "Customer reports the lights appear normal"
     elif matches(r"\blights?\b.{0,20}\bdim\b|\bdim\b.{0,10}\blights?\b", text):
         facts["lighting"] = "Customer reports dim lights"
-    elif matches(r"\b(?:all (?:of )?(?:the )?)?lights?\b.{0,20}\b(?:are on|still on|stayed on|remain on|remaining on|illuminate)\b", text):
+    elif matches(r"\b(?:all (?:of )?(?:the )?)?lights?\b.{0,20}\b(?:turn on|are on|still on|stayed on|remain on|remaining on|illuminate)\b", text):
         facts["lighting"] = "Customer reports the lights illuminate"
     onset = onset_observation(text)
     if onset:

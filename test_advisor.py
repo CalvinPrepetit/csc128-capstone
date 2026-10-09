@@ -42,6 +42,27 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_provider_failure_during_details_still_allows_review_and_booking(self):
+        s = new_session()
+        factory = Mock(side_effect=AssertionError("Local action must not call API"))
+        process_turn("Smoke coming from the hood", s, factory)
+        process_turn("yes", s, factory)
+        process_turn("about an hour ago", s, factory)
+        failed = Mock(side_effect=APIConnectionError(request=httpx.Request("POST", "https://example.com")))
+        reply = process_turn("smoke and hissing", s, failed)
+        self.assertIn("fallback intake note", reply)
+        self.assertIn("First noticed about an hour ago", reply)
+        self.assertIn("Customer reports smoke and hissing", reply)
+        self.assertFalse(s["records"])
+        process_turn("yes", s, factory)
+        process_turn("i want to schedule an appointment", s, factory)
+        process_turn("Friday at 9am", s, factory)
+        process_turn("Demo 2020 Honda Civic", s, factory)
+        process_turn("yes", s, factory)
+        self.assertEqual(len(s["records"]), 1)
+        self.assertIn("hissing", s["records"][0]["summary"])
+        factory.assert_not_called()
+
     def test_safety_intake_keeps_answers_and_department_corrections(self):
         s = new_session()
         factory = Mock(side_effect=AssertionError("Clear controls should not use the API"))
@@ -232,7 +253,11 @@ class ConversationTests(unittest.TestCase):
         factory = Mock(side_effect=APIConnectionError(request=httpx.Request("POST", "https://example.invalid")))
         reply = process_turn("lights turn on", s, factory)
         self.assertIn("temporarily unavailable", reply)
-        self.assertEqual(s["queued_observations"], ["this morning", "it just clicks"])
+        self.assertIn("fallback intake note", reply)
+        self.assertIn("this morning", s["fields"]["summary"])
+        self.assertIn("clicking", s["fields"]["summary"])
+        self.assertIn("lights illuminate", s["fields"]["summary"])
+        self.assertEqual(s["stage"], "departments")
         self.assertEqual(s["records"], [])
 
     def test_skip_flushes_buffered_answers_into_ai_note(self):

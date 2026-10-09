@@ -624,6 +624,13 @@ def process_turn(text, session, client_factory, control=None):
         if isinstance(error, RateLimitError):
             session["retry_until"] = time.time() + retry_seconds(error)
         reply = friendly_error(error)
+        if (isinstance(error, APIError) and session["stage"] == "clarify"
+                and session["fields"]["summary"] and (not control or control == "finish")):
+            details = "\n".join(session.pop("queued_observations", []) + [text])
+            preserve_observations(session, details, session["last_question"])
+            session["issue_messages"].append(text)
+            session["questions_asked"] = 3
+            reply += "\n\nI kept your answers. Here is a fallback intake note for your review; AI polishing is unavailable right now.\n\n" + advance(session)
     if moving_stall(text) and not control:
         reply = ("An engine shutting off while driving is a safety concern. I cannot tell you "
                  "it is safe to drive; contact a human service advisor or towing provider "
