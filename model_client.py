@@ -69,7 +69,7 @@ def interpret(text, session, client):
         if isinstance(value.get("updates"), dict):
             value["updates"] = {key: item for key, item in value["updates"].items() if item is not None}
         for key in ("policy_topic", "refusal", "summary", "clarification"):
-            if value.get(key) is None:
+            if value.get(key) is None or value.get(key) == []:
                 value[key] = ""
     required = RESPONSE_KEYS
     if not isinstance(value, dict) or set(value) != required:

@@ -42,6 +42,21 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_live_empty_clarification_array_does_not_reject_final_note(self):
+        s = new_session()
+        send(s, "My car isnt starting", intent="triage", action="question", has_issue=True,
+             summary="Customer reports the vehicle is not starting. The issue is currently unclear.",
+             questions=["What happens when you turn the key?"])
+        note = "Customer reports the vehicle will not start and makes several clicks, beginning this morning."
+        reply = send(s, "Several clicks. It began this morning.", intent="triage", has_issue=True,
+                     summary=note, clarification=[], questions=[], departments=["electrical"], details={
+                         "concern": {"value": "The issue is unclear", "evidence": "The issue is unclear"},
+                         "location": {"value": None, "evidence": ""}})
+        self.assertIn("Here is the technician note", reply)
+        self.assertNotIn("currently unclear", s["fields"]["summary"])
+        self.assertIn("several clicks", s["fields"]["summary"])
+        self.assertEqual(s["records"], [])
+
     def test_reported_empty_issue_flag_does_not_discard_ai_questions(self):
         for text in ("Im hearing a weird noise from my car", "My car isnt starting"):
             with self.subTest(text=text):

@@ -265,9 +265,14 @@ def preserve_observations(session, text, question="", details=None, polished_not
             if not detail_words(previous) <= detail_words(answer):
                 answer = previous + " " + answer
         clean_details[topic] = answer
+        if topic == "concern":
+            session.pop("provisional_concern", None)
     details = verified_details
+    if polished_note and session.get("intake_complete") and session.pop("provisional_concern", False):
+        clean_details["concern"] = service_text(polished_note)
     if session["fields"]["summary"] and not clean_details.get("concern"):
         clean_details["concern"] = service_text(session["fields"]["summary"])
+        session["provisional_concern"] = True
     key = normalize(question)
     short_answer = normalize(text.splitlines()[-1] if text.splitlines() else "")
     topic = ("onset" if re.search(r"first notice|(?:did|does).*start|begin", key)
