@@ -1,83 +1,46 @@
-# Five-minute capstone video
+# Short capstone recording cues
 
-**Target: 4:30. Maximum: 5:00.** Record your screen and voice. Type the prompts
-below as the conversation goes; buttons are optional. Use fictional details and
-confirm only previews that are correct.
+Record screen + voice. Aim for 3-4 minutes; stop before 5. One browser session,
+one Start Over. Keep keys/settings off-screen; outage simulation starts OFF.
+Read previews before confirming. Buttons are optional except Start Over/outage.
 
-App: https://calvinprepetit-auto-shop.streamlit.app/
+## 1. Concern, summary, appointment
 
-Before recording: open a fresh private window, make sure the app is awake, and
-turn **Simulate API outage** off. Keep this sheet off-screen. Do one take; model
-replies and loading times vary.
+Say: "This automated service advisor organizes concerns; it does not diagnose cars."
 
-## 0:00–0:20 | Introduce
+Type, following the bot's prompts:
 
-Show the app title and software disclosure.
+1. `My muffler has rattled while driving since last week.`
+   If asked for more: answer what you know, or `I'm not sure`.
+2. `Show my technician summary`
+3. `yes` to accept the note, then `yes` at the summary preview.
+   Point out that summary review saves nothing.
+4. `Schedule an appointment`
+5. Choose a displayed day/time.
+6. When asked: `Demo 2023 Honda Civic`
+7. Review the appointment preview; `yes`. Show the APT number.
 
-**Say:** “This is my Auto Shop Service Advisor. It helps customers describe a
-vehicle concern, review a technician note, schedule a visit, or create a service
-ticket. A technician—not the bot—inspects the vehicle.”
+Say: "AI writes the note. Python keeps the details, checks openings, and saves only after confirmation."
 
-## 0:20–1:30 | Concern, AI note, and summary
+## 2. Ticket and grounded answer
 
-Type these as asked:
+Click Start Over ONCE. This begins another request, not another browser session.
 
-1. `There is a weird noise coming from my muffler.`
-2. `Last week.`
-3. `When driving.`
-   If another follow-up appears, type `I'm not sure` rather than guessing.
-4. Review the technician note and department. Type `Show my technician summary`.
-5. Type `yes` to accept the note; review the summary preview, then type `yes`.
+1. `I need my tires and oil changed`
+2. `Create a service ticket`, then `yes` when asked to accept the note.
+3. When asked: `Demo 2020 Honda Civic`
+4. Review; `yes`. Show SR number and Visit: Not scheduled.
+5. `What should I bring?` Point to the guide source.
 
-**Say:** “The AI turns the customer’s words into a clear technician note and
-suggests a service area. The conversation keeps details across turns. This is
-an inspection suggestion, not a diagnosis; the summary alone saves no request.”
+Say: "This separate ticket books no appointment. Shop information comes from the guide."
 
-## 1:30–2:40 | Appointment and saved record
+## 3. Failure and improvement
 
-1. Type `Schedule an appointment`.
-2. Choose one of the displayed openings.
-3. At the customer-details prompt, type `Calvin 2023 Honda Civic`.
-4. At the preview, change the day: `Actually can I do Monday?`
-5. Choose a displayed Monday time; if none is available, pick another displayed
-   opening. Read the revised preview, then type `yes`.
-6. Show the saved APT number.
+Without restarting: turn Simulate API outage ON. Type `My car is making a noise`.
+Show the friendly error/no new save. Turn simulation OFF.
 
-**Say:** “Python checks openings, holds the name, vehicle, day, and time, and
-saves only after I confirm the reviewed details.”
+Say: "Failure leaves saved records unchanged. Next, I'd add a shared database and calendar dates."
 
-## 2:40–3:35 | Unscheduled ticket and grounded answer
-
-1. Click **Start Over**. Type `I need my tires and oil changed`; review both jobs.
-2. Type `Create a service ticket`, then `yes` to use the note for that ticket.
-3. At the details prompt, type `Demo 2020 Honda Civic`; review and confirm.
-4. Show the SR number and **Visit: Not scheduled**. Type `What should I bring?`
-   and point out the shop-guide source.
-
-**Say:** “This ticket records requested work without booking a visit. The shop
-answer is grounded in the guide and shows its source.”
-
-## 3:35–3:50 | Safe boundary
-
-Type `Can you guarantee my warranty will cover this repair?`
-
-**Say:** “The bot sends warranty decisions to the manufacturer or dealer; it
-doesn’t decide or deny coverage.”
-
-## 3:50–4:15 | Graceful failure
-
-Click **Start Over**. Turn **Simulate API outage** on. Type `My car is making a
-noise`. Show the friendly error and that no request was saved. Turn simulation off.
-
-**Say:** “This simulated outage shows the app handles a provider failure without
-breaking or saving an incomplete request. It also handles rate limits.”
-
-## 4:15–4:30 | Improvement
-
-**Say:** “Requests and schedules are demo-only and session-based. Next, I’d add
-a shared database and real calendar dates so the shop can share persistent records.”
-
-Stop before 5:00. If time runs short, skip the warranty example and the duplicate-
-confirmation check; keep all four intents, the grounded answer, the failure, and
-the improvement. Don’t confirm an incorrect preview. If the provider errors,
-stop and wait for the shown cooldown before trying again. Never show API keys.
+Stop. Covered: four intents, slot filling, state, AI, grounding/tools, disclosure,
+graceful failure, and one improvement. Optional only if time: ask `Can you decide my warranty coverage?`
+The recording complements the code/tests and six-section PDF; it does not guarantee a grade.
