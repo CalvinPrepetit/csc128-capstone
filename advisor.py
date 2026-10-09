@@ -539,7 +539,8 @@ def handle(text, session, client_factory, control=None):
     if isinstance(work, dict) and isinstance(work.get("value"), str) and requested_work(work["value"], text):
         result["has_issue"] = True
     result["policy_topic"] = policy_topic(text, result["policy_topic"])
-    routing_ok = (session["stage"] == "departments" and result["routing_agreement"]
+    routing_ok = (session["stage"] == "departments"
+                  and (result["routing_agreement"] or result["action"] == "confirm")
                   and not consent_conflict(text.replace("?", ""))
                   and (not result["has_issue"] or not result["departments"]
                        or set(result["departments"]) == set(session["fields"]["departments"])))
@@ -568,10 +569,10 @@ def handle(text, session, client_factory, control=None):
         result["has_issue"] = True
         result["action"] = "provide"
         result["intent"] = "continue"
-    # Describing work is not choosing a ticket. Keep model-led choices only when
-    # the customer requests a task or supplies visit details, not just symptoms.
+    # A new concern alone is not a task choice. Other replies may express a task
+    # naturally; trust the model's intent without requiring matching keywords.
     if (session["intent"] == "triage" and result["intent"] in {"appointment", "ticket", "summary"}
-            and not task and not explicit_visit
+            and result["has_issue"] and not routing_ok and not task and not explicit_visit
             and not re.search(r"\b(?:ticket|summary)\b", clean)
             and not any(result["updates"].get(key) for key in ("day", "time"))):
         result["intent"] = "continue"

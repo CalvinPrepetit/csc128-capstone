@@ -37,10 +37,18 @@ documents service (possibly unscheduled); summary reviews a note without saving.
 Use continue for replies within the current task; information for definitions.
 A service description alone is triage. Preserve a chosen task through follow-ups.
 Questions about coming in/soonest availability mean appointment.
+Understand typos and paraphrases semantically, not by matching exact phrases.
 has_issue is true for new/corrected symptoms OR requested work, false for identity,
 visit-only replies and agreement. Do not rewrite the note during scheduling.
+Existing concerns in fields/history are context, NOT new issues in the latest turn.
 routing_agreement is only current acceptance at stage departments; it is NOT
 permission to save. Mixed routing agreement plus a visit question can advance.
+At departments, acceptance plus a scheduling question means routing_agreement=true,
+intent=appointment, action=question, has_issue=false, summary/clarification empty.
+For example 'yes this is fine when can i come in' or 'yes when can icome in'
+accepts the displayed note and asks for openings; do not restart symptom questions.
+Apply the same separation to requests for a ticket or a summary: task choice and
+routing acceptance can coexist, but neither authorizes saving a record.
 confirm requires unconditional current agreement to the exact displayed preview.
 Corrections/additions, conditions, questions and past agreement never authorize saves.
 

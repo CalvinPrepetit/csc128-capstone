@@ -42,6 +42,34 @@ def filled(kind="appointment"):
     return session
 
 class ConversationTests(unittest.TestCase):
+    def test_model_understands_task_choice_without_keyword_gate(self):
+        for intent, phrase in (("appointment", "yes when can icome in"),
+                               ("appointment", "yes this is fine when can i come in"),
+                               ("ticket", "yes put that on paper for the shop"),
+                               ("summary", "yes let me review the cleaned up note")):
+            with self.subTest(intent=intent, phrase=phrase):
+                s = new_session()
+                send(s, "i need my tires changed")
+                note = s["fields"]["summary"]
+                client = client_for(output(intent=intent, action="question", routing_agreement=True))
+                reply = process_turn(phrase, s, lambda: client)
+                client.chat.completions.create.assert_called_once()
+                self.assertEqual(s["intent"], intent)
+                self.assertTrue(s["departments_confirmed"])
+                self.assertEqual(s["fields"]["summary"], note)
+                self.assertNotIn("first notice", reply)
+                self.assertEqual(s["records"], [])
+                if intent == "appointment":
+                    self.assertIn("Available demo intake times", reply)
+
+    def test_model_combined_confirmation_changes_task_without_saving(self):
+        s = new_session()
+        send(s, "i need my tires changed")
+        reply = send(s, "yes this is fine when can i come in", intent="appointment", action="confirm")
+        self.assertTrue(s["departments_confirmed"])
+        self.assertIn("Available demo intake times", reply)
+        self.assertEqual(s["records"], [])
+
     def test_tire_request_is_work_not_a_symptom_or_policy_question(self):
         s = new_session()
         reply = send(s, "i need my tires changed", has_issue=False, action="question",
